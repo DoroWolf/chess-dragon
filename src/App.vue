@@ -63,7 +63,7 @@
         </div>
       </div>
 
-      <img v-if="isDragging && dragStartSquare" class="floating-piece" draggable="false"
+      <img v-if="isDragging && dragStartSquare" class="floating-piece no-select" draggable="false"
         :src="getPieceImage(board[dragStartSquare.row]?.[dragStartSquare.col]!, board, isDraw, hasResigned, timeoutWinner)"
         :style="{ left: mousePos.x + 'px', top: mousePos.y + 'px' }" alt="" />
     </div>
@@ -75,14 +75,27 @@
       :black-time-seconds="blackTimeSeconds" :active-color="currentTurn" :clock-test-id="'sidebar-chess-clock'"
       v-model:is-sound-enabled="isSoundEnabled" v-model:coordinate-label-mode="coordinateLabelMode"
       @toggle-flip="isFlipped = !isFlipped" :has-game-started="hasGameStarted" @undo="handleUndo"
-      @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" />
+      @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" @back-to-setup="handleBackToSetup" />
+
+    <!-- 右上角固定设置按钮 -->
+    <button type="button" class="settings-fab" @click="showSettingsModal = true" title="设置">
+      ⚙
+    </button>
+
+    <!-- 设置弹窗 Modal -->
+    <SettingsModal :visible="showSettingsModal" :is-sound-enabled="isSoundEnabled"
+      :coordinate-label-mode="coordinateLabelMode" @close="showSettingsModal = false"
+      @toggle-flip="isFlipped = !isFlipped"
+      @update:is-sound-enabled="(val: boolean) => isSoundEnabled = val"
+      @update:coordinate-label-mode="(val: 'off' | 'inside' | 'outside') => coordinateLabelMode = val" />
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import Promotion from './components/Promotion.vue'
 import Sidebar from './components/Sidebar.vue'
+import SettingsModal from './components/SettingsModal.vue'
 import GameSetup from './components/GameSetup.vue'
 import { useSettings } from './composables/useSettings'
 import { useBoardDisplay } from './composables/useBoardDisplay'
@@ -90,6 +103,9 @@ import { useGameState } from './composables/useGameState'
 
 // ---- 设置持久化 ----
 const { isSoundEnabled, coordinateLabelMode } = useSettings()
+
+// ---- 设置弹窗状态 ----
+const showSettingsModal = ref(false)
 
 // ---- 棋盘显示 ----
 const {
@@ -141,6 +157,7 @@ const {
   handleResign,
   handleDrawOffer,
   handleRestart,
+  handleBackToSetup,
   handleGameSetupStart,
   cancelPromotion,
   applyPromotion,
@@ -199,7 +216,6 @@ onUnmounted(() => {
   max-width: calc(100vh - 120px);
   width: 80vmin;
   margin: 0 auto;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
   box-sizing: border-box;
   overflow: visible;
 }
@@ -273,7 +289,8 @@ onUnmounted(() => {
   bottom: 15%;
   transform: translateX(-50%) scale(var(--piece-scale));
   transform-origin: bottom center;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: grab;
   z-index: 10;
   transition: opacity 0.1s ease;
 }
@@ -364,5 +381,36 @@ onUnmounted(() => {
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
   z-index: 50;
+}
+
+/* 右上角固定设置按钮 */
+.settings-fab {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid #212529;
+  background: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: background-color 0.15s;
+  padding: 0;
+  line-height: 1;
+}
+
+.settings-fab:hover {
+  background: #f0f0f0;
+}
+
+.settings-fab:focus-visible {
+  outline: 2px solid #ffd33d;
+  outline-offset: 2px;
 }
 </style>

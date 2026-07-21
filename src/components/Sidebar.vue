@@ -3,20 +3,13 @@
     <ChessClock :is-clock-enabled="isClockEnabled" :white-time-seconds="whiteTimeSeconds"
       :black-time-seconds="blackTimeSeconds" :active-color="activeColor" :test-id="clockTestId" />
 
-    <div class="nes-container game-status">
+    <div class="card no-select game-status">
       <div v-if="gameStatus" class="status-message">{{ gameStatus }}</div>
       <div v-else class="current-turn">{{ currentTurn === 'white' ? '白棋' : '黑棋' }}执子</div>
     </div>
 
     <!-- 棋谱显示区 -->
-    <div class="nes-container with-title">
-      <div class="title-bar">
-        <p class="title">棋谱</p>
-        <button type="button" class="nes-btn is-primary copy-btn" :disabled="moveHistory.length === 0" @click="copyPGN">
-          {{ copyStatusText }}
-        </button>
-      </div>
-
+    <div class="card with-title">
       <div class="moves-list">
         <div v-for="turn in movePairs" :key="turn.number"
           :class="['move-pair', { 'last-move-pair': turn.number === movePairs.length && !gameResult }]">
@@ -26,86 +19,41 @@
         </div>
 
         <!-- 将对局结果放在序号位置 -->
-        <div v-if="gameResult" class="move-pair game-result-move-pair">
+        <div v-if="gameResult" class="move-pair">
           <span class="move-number game-result-text">{{ gameResult }}</span>
         </div>
       </div>
     </div>
 
-    <div v-if="isGameOver" class="button-group Single-btn">
-      <button type="button" class="nes-btn is-primary restart-btn" @click="$emit('restart')">
+    <div v-if="isGameOver" class="button-group">
+      <button type="button" class="btn settings-btn" @click="$emit('back-to-setup')">
+        对局设置
+      </button>
+      <button type="button" class="btn btn-primary" @click="$emit('restart')">
         重赛
       </button>
     </div>
     <div v-else class="button-group">
-      <button type="button" class="nes-btn is-warning" :disabled="isUndoDisabled" @click="$emit('undo')">
+      <button type="button" class="btn btn-warning" :disabled="isUndoDisabled" @click="$emit('undo')">
         悔棋
       </button>
-      <button type="button" class="nes-btn is-success" :disabled="isGameActionDisabled" @click="handleDrawClick">
+      <button type="button" class="btn btn-success" :disabled="isGameActionDisabled" @click="handleDrawClick">
         {{ isClaimableDraw ? '宣告和棋' : '申请和棋' }}
       </button>
-      <button type="button" class="nes-btn is-error" :disabled="isGameActionDisabled" @click="handleResignClick">
+      <button type="button" class="btn btn-danger" :disabled="isGameActionDisabled" @click="handleResignClick">
         投降
       </button>
     </div>
 
-    <!-- 设置按钮 -->
-    <div class="settings-action">
-      <button type="button" class="nes-btn is-normal settings-toggle-btn" @click="showSettingsModal = true">
-        设置
-      </button>
-    </div>
-
-    <!-- 设置弹窗 Modal -->
-    <div v-if="showSettingsModal" class="modal-backdrop">
-      <div class="nes-container dialog-box settings-dialog">
-        <p class="dialog-title">游戏设置</p>
-
-        <div class="settings-list">
-          <!-- 翻转棋盘（按钮形式） -->
-          <div class="setting-item">
-            <span class="setting-label">棋盘方向</span>
-            <button type="button" class="nes-btn is-primary flip-btn" @click="$emit('toggle-flip')">
-              翻转棋盘
-            </button>
-          </div>
-
-          <!-- 音效开关 -->
-          <div class="setting-item">
-            <span class="setting-label">音效</span>
-            <label class="nes-pointer">
-              <input type="checkbox" class="nes-checkbox" :checked="isSoundEnabled" @change="handleSoundChange" />
-              <span></span>
-            </label>
-          </div>
-
-          <!-- 棋盘坐标标记 -->
-          <div class="setting-item">
-            <span class="setting-label">棋盘标志</span>
-            <div class="nes-select is-small select-wrapper">
-              <select :value="coordinateLabelMode" @change="handleCoordinateChange">
-                <option value="off">关闭</option>
-                <option value="inside">内侧</option>
-                <option value="outside">外侧</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div class="dialog-buttons">
-          <button type="button" class="nes-btn is-primary" @click="showSettingsModal = false">完成</button>
-        </div>
-      </div>
-    </div>
 
     <!-- 二次确认弹窗 Modal -->
     <div v-if="showConfirmModal" class="modal-backdrop">
-      <div class="nes-container dialog-box">
+      <div class="card dialog-box">
         <p class="dialog-title">确认提示</p>
         <p class="dialog-message">{{ confirmMessage }}</p>
         <div class="dialog-buttons">
-          <button type="button" class="nes-btn" @click="cancelConfirm">取消</button>
-          <button type="button" class="nes-btn is-primary" @click="executeConfirm">确认</button>
+          <button type="button" class="btn" @click="cancelConfirm">取消</button>
+          <button type="button" class="btn" @click="executeConfirm">确认</button>
         </div>
       </div>
     </div>
@@ -162,27 +110,15 @@ const emit = defineEmits<{
   draw: []
   resign: []
   restart: []
+  'back-to-setup': []
   'toggle-flip': []
   'update:isSoundEnabled': [value: boolean]
   'update:coordinateLabelMode': [value: 'off' | 'inside' | 'outside']
 }>()
 
-// 音效变更处理 — 仅 emit，持久化由父组件 useSettings 负责
-const handleSoundChange = (e: Event) => {
-  const checked = (e.target as HTMLInputElement).checked
-  emit('update:isSoundEnabled', checked)
-}
-
-// 棋盘标志变更处理 — 仅 emit，持久化由父组件 useSettings 负责
-const handleCoordinateChange = (e: Event) => {
-  const value = (e.target as HTMLSelectElement).value as 'off' | 'inside' | 'outside'
-  emit('update:coordinateLabelMode', value)
-}
-
 const copyStatusText = ref('复制')
 
 const showConfirmModal = ref(false)
-const showSettingsModal = ref(false)
 const confirmMessage = ref('')
 const pendingAction = ref<'draw' | 'resign' | null>(null)
 
@@ -309,26 +245,9 @@ const cancelConfirm = () => {
   color: #222;
 }
 
-/* 标题与复制按钮栏 */
-.title-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 2px solid #212529;
-  padding: 0.25rem 0;
-  background-color: #fff;
-}
-
-:deep(.nes-container .title) {
-  margin: 0;
-  padding: 0 0.5rem;
-  font-weight: bold;
-  border-bottom: none;
-}
-
 .copy-btn {
-  font-size: 0.7rem !important;
-  padding: 2px 6px !important;
+  font-size: 0.7rem;
+  padding: 2px 6px;
   margin-right: 0.25rem;
 }
 
@@ -339,7 +258,7 @@ const cancelConfirm = () => {
   padding: 0.5rem;
   background-color: #fff;
   border: 2px solid #212529;
-  margin-top: 0.5rem;
+  margin-top: 1rem;
   font-family: 'Unifont', monospace;
 }
 
@@ -368,13 +287,8 @@ const cancelConfirm = () => {
   background-color: #fffacd;
 }
 
-.game-result-move-pair {
-  background-color: #e9ecef;
-  margin-top: 0.25rem;
-}
-
 .game-result-text {
-  color: #212529;
+  color: #666;
   width: auto;
 }
 
@@ -384,39 +298,12 @@ const cancelConfirm = () => {
   font-weight: bold;
 }
 
-.status-message {
-  color: #212529;
-  font-size: 0.9rem;
-}
-
+.status-message,
 .current-turn {
   color: #212529;
   font-size: 0.9rem;
 }
 
-.nes-btn {
-  font-family: 'Unifont', system-ui;
-  font-size: 0.7rem;
-  white-space: nowrap;
-  border: 2px solid #212529;
-  cursor: pointer;
-  text-align: center;
-}
-
-.restart-btn {
-  font-size: 0.85rem !important;
-  padding: 0.5rem !important;
-}
-
-.settings-action {
-  width: 100%;
-}
-
-.settings-toggle-btn {
-  width: 100%;
-  font-size: 0.8rem !important;
-  padding: 0.4rem !important;
-}
 
 .button-group {
   display: flex;
@@ -433,21 +320,10 @@ const cancelConfirm = () => {
   width: 100%;
 }
 
-.button-group .nes-btn {
+.button-group .btn {
   flex: 1;
   width: auto;
   padding: 0.35rem 0.15rem;
-}
-
-.button-group .nes-btn:disabled,
-.copy-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.button-group .nes-btn:not(:disabled):hover,
-.settings-toggle-btn:hover {
-  transform: translateY(-2px);
 }
 
 .moves-list::-webkit-scrollbar {
@@ -466,18 +342,7 @@ const cancelConfirm = () => {
   background: #555;
 }
 
-:deep(.nes-container) {
-  border: 2px solid #212529;
-  background-color: #fff;
-  padding: 1rem;
-  box-shadow: 2px 2px 0 #212529;
-}
-
-:deep(.nes-container.with-title) {
-  padding-top: 0;
-}
-
-/* 弹窗样式 */
+/* 弹窗布局专有样式 */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -512,7 +377,7 @@ const cancelConfirm = () => {
   gap: 0.5rem;
 }
 
-.dialog-buttons .nes-btn {
+.dialog-buttons .btn {
   flex: 1;
   font-size: 0.8rem;
   padding: 0.25rem 0.5rem;
@@ -538,42 +403,17 @@ const cancelConfirm = () => {
 }
 
 .flip-btn {
-  font-size: 0.7rem !important;
-  padding: 2px 8px !important;
+  font-size: 0.7rem;
+  padding: 2px 8px;
 }
 
-.setting-item .nes-pointer,
-.setting-item .nes-checkbox,
-.setting-item .nes-checkbox+span {
-  cursor: default !important;
+.custom-checkbox {
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
 }
 
 .select-wrapper {
   width: auto;
-}
-
-.select-wrapper.nes-select {
-  cursor: default !important;
-}
-
-.select-wrapper select {
-  cursor: default !important;
-  font-size: 0.75rem !important;
-  height: auto !important;
-  padding: 2px 8px !important;
-
-  /* 实心边框设置 */
-  border: 2px solid #212529 !important;
-  /* 使用实心线代替 NES 的图像边框 */
-  border-image: none !important;
-  background-color: #fff;
-
-  /* 取消 CSS pixelated 光标 */
-  cursor: default !important;
-}
-
-/* 覆盖 NES 模拟的下拉箭头 Hover 时的像素光标 */
-.select-wrapper.nes-select::after {
-  display: none !important;
 }
 </style>

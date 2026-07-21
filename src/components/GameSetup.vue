@@ -15,7 +15,7 @@
                 </div>
 
                 <input v-if="boardMode === 'custom'" v-model="fenInput" type="text" class="fen-input"
-                    placeholder="请输入 FEN，例如：rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" />
+                    placeholder="在此处粘贴 FEN 文本" />
             </div>
 
             <div class="setup-section">
@@ -23,7 +23,7 @@
                 <label class="slider-row">
                     <span>限时（分钟）</span>
                     <input v-model.number="timeMinutes" type="range" min="0" max="180" step="1" />
-                    <strong>{{ timeMinutes === 0 ? '不限时' : `${timeMinutes} 分钟` }}</strong>
+                    <strong>{{ timeMinutes === 0 ? '无限制' : `${timeMinutes} 分钟` }}</strong>
                 </label>
 
                 <label v-if="timeMinutes > 0" class="slider-row">
@@ -34,7 +34,7 @@
             </div>
 
             <div class="setup-section">
-                <h3>先手方</h3>
+                <h3>执棋方</h3>
                 <div class="option-group">
                     <label class="option-card">
                         <input v-model="starter" type="radio" value="black" />
@@ -118,7 +118,7 @@ const handleStart = () => {
     justify-content: center;
     align-items: center;
     padding: 20px;
-    background: rgba(16, 16, 16, 0.7);
+    background-color: #f0f0f0;
 }
 
 .setup-panel {

@@ -1,0 +1,61 @@
+.card {
+  border: 2px solid #212529;
+  background-color: #fff;
+  padding: 1rem;
+  box-shadow: 2px 2px 0 #909294;
+}
+
+.card.with-title {
+  padding-top: 0;
+}
+
+.btn {
+  font-family: 'Unifont', system-ui, -apple-system, sans-serif;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  border: 2px solid #212529;
+  background-color: #e7e7e7;
+  color: #212529;
+  cursor: pointer;
+  text-align: center;
+  box-shadow: 2px 2px 0 #909294;
+}
+
+.btn-primary {
+  background-color: #209cee;
+  color: #fff;
+}
+
+.btn-danger {
+  background-color: #e76e55;
+  color: #fff;
+}
+
+.btn-warning {
+  background-color: #f7d51d;
+  color: #212529;
+}
+
+.btn-success {
+  background-color: #92cc41;
+  color: #212529;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):hover {
+  transform: translateY(1px);
+  box-shadow: 1px 1px 0 #909294;
+}
+
+.btn:focus {
+  outline: none;
+}
+
+.no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}

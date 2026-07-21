@@ -40,6 +40,7 @@ export function useGameState(
   const showSetup = ref(true)
   const playerColor = ref<Color>('white')
   const isClockEnabled = ref(true)
+  const lastSetupConfig = ref<GameSetupConfig | null>(null)
 
   // ---- 核心游戏状态 ----
   const board = ref<Board>(createInitialBoard())
@@ -759,28 +760,24 @@ export function useGameState(
   }
 
   const handleRestart = (): void => {
-    isFlipped.value = !isFlipped.value
-    playerColor.value = playerColor.value === 'white' ? 'black' : 'white'
-    showSetup.value = true
+    // 重赛：沿用上次设置，黑白调换
+    if (!lastSetupConfig.value) {
+      // 没有上次配置，回退到显示设置
+      showSetup.value = true
+      return
+    }
 
-    board.value = createInitialBoard()
-    currentTurn.value = 'white'
-    selectedSquare.value = null
-    hoverSquare.value = null
-    lastMove.value = null
-    halfmoveClock.value = 0
-    whiteTimeSeconds.value = INITIAL_CLOCK_SECONDS
-    blackTimeSeconds.value = INITIAL_CLOCK_SECONDS
-    hasGameStarted.value = false
-    stopClock()
-    timeoutWinner.value = null
-    moveHistory.value = []
-    boardHistory.value = []
-    isAgreedDraw.value = false
-    hasResigned.value = null
-    promotionPending.value = null
-    promotionStyle.value = {}
-    positionHistory.value = [getPositionKey(board.value, currentTurn.value, lastMove.value)]
+    const config = lastSetupConfig.value
+    const swappedStarter: GameSetupConfig['starter'] =
+      config.starter === 'black' ? 'white' : config.starter === 'white' ? 'black' : config.starter
+    const swappedConfig: GameSetupConfig = { ...config, starter: swappedStarter }
+
+    applyGameSetup(swappedConfig)
+  }
+
+  const handleBackToSetup = (): void => {
+    // 回到对局设置：直接显示设置画面，不清除棋盘状态
+    showSetup.value = true
   }
 
   // ============================================================
@@ -791,11 +788,15 @@ export function useGameState(
       config.boardMode === 'custom' ? parseFenToBoard(config.fen) : createInitialBoard()
     if (!parsedBoard) return
 
+    // 保存本次配置，供重赛使用
+    lastSetupConfig.value = config
+
     isClockEnabled.value = config.timeMinutes > 0
 
     const starterColor = getStarterColor(config.starter)
     // 先手为黑方时，自动翻转棋盘
     isFlipped.value = starterColor === 'black'
+    playerColor.value = starterColor
 
     board.value = parsedBoard
     currentTurn.value = starterColor
@@ -910,6 +911,7 @@ export function useGameState(
     handleResign,
     handleDrawOffer,
     handleRestart,
+    handleBackToSetup,
     handleGameSetupStart,
 
     // 工具
