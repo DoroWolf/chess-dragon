@@ -337,6 +337,14 @@ const applyPromotion = (newType: string) => {
 
   const nextTurn = currentTurn.value === 'white' ? 'black' : 'white'
 
+  // 检测将棋状态
+  let checkStatus: 'check' | 'checkmate' | undefined = undefined
+  if (isCheckmate(nextBoard, nextTurn)) {
+    checkStatus = 'checkmate'
+  } else if (isKingInCheck(nextBoard, nextTurn)) {
+    checkStatus = 'check'
+  }
+
   // 记录走棋
   const notation = generateMoveNotation(
     board.value,
@@ -346,6 +354,7 @@ const applyPromotion = (newType: string) => {
     to.col,
     undefined,
     newType as any,
+    checkStatus,
   )
   moveHistory.value.push(notation)
   boardHistory.value.push({
@@ -415,6 +424,14 @@ const handleSquareClick = (row: number, col: number): void => {
       sourceRow[selected.col] = null
     }
 
+    // 检测将棋状态
+    let checkStatus: 'check' | 'checkmate' | undefined = undefined
+    if (isCheckmate(nextBoard, nextTurn)) {
+      checkStatus = 'checkmate'
+    } else if (isKingInCheck(nextBoard, nextTurn)) {
+      checkStatus = 'check'
+    }
+
     // 记录走棋
     const notation = generateMoveNotation(
       board.value,
@@ -423,6 +440,8 @@ const handleSquareClick = (row: number, col: number): void => {
       row,
       col,
       move?.special,
+      undefined,
+      checkStatus,
     )
     moveHistory.value.push(notation)
     boardHistory.value.push({

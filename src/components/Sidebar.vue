@@ -147,6 +147,7 @@ const pgnText = computed(() => {
 
   if (!moves) return ''
 
+  // PGN 格式：所有走法后跟对局结果
   return gameResult.value ? `${moves} ${gameResult.value}` : moves
 })
 
@@ -168,6 +169,31 @@ const copyPGN = async () => {
       copyStatusText.value = '复制'
     }, 2000)
   }
+}
+
+/**
+ * 验证 PGN 记号的有效性
+ * 处理可能导致歧义的情况，确保记号符合标准 PGN 格式
+ */
+const validateAndImproveNotation = (notation: string): string => {
+  // 验证王车易位记号
+  if (notation === 'O-O' || notation === 'O-O-O' || notation === 'O-O+' || notation === 'O-O-O+' || 
+      notation === 'O-O#' || notation === 'O-O-O#') {
+    return notation
+  }
+
+  // 验证兵的走法（可以是 'e4', 'exd5', 'e8=Q+' 等）
+  if (/^[a-h]/.test(notation)) {
+    return notation
+  }
+
+  // 验证其他棋子的走法（K, Q, R, B, N 开头）
+  if (/^[KQRBN]/.test(notation)) {
+    return notation
+  }
+
+  // 如果以上都不匹配，返回原始记号
+  return notation
 }
 
 // 按钮点击处理

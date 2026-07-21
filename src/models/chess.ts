@@ -591,7 +591,15 @@ const squareToNotation = (row: number, col: number): string => {
 }
 
 /**
- * 生成走棋的代数记法
+ * 生成走棋的代数记法（增强版，支持消歧和将棋标记）
+ * @param board 当前棋盘
+ * @param fromRow 起始行
+ * @param fromCol 起始列
+ * @param toRow 目标行
+ * @param toCol 目标列
+ * @param special 特殊移动类型
+ * @param promotion 升变棋子类型
+ * @param checkStatus 将棋状态：'check' 表示将军，'checkmate' 表示将死
  */
 export const generateMoveNotation = (
   board: Board,
@@ -601,6 +609,7 @@ export const generateMoveNotation = (
   toCol: number,
   special?: 'castle' | 'enPassant',
   promotion?: PieceType,
+  checkStatus?: 'check' | 'checkmate',
 ): string => {
   const piece = board[fromRow]?.[fromCol]
   if (!piece) return ''
@@ -610,10 +619,11 @@ export const generateMoveNotation = (
 
   // 处理王车易位
   if (special === 'castle') {
+    const suffix = checkStatus === 'checkmate' ? '#' : checkStatus === 'check' ? '+' : ''
     if (toCol > fromCol) {
-      return 'O-O' // 王翼易位
+      return `O-O${suffix}` // 王翼易位
     } else {
-      return 'O-O-O' // 后翼易位
+      return `O-O-O${suffix}` // 后翼易位
     }
   }
 
@@ -631,11 +641,18 @@ export const generateMoveNotation = (
     if (promotion) {
       notation += `=${promotion.charAt(0).toUpperCase()}`
     }
+    // 添加将棋/将死标记
+    const suffix = checkStatus === 'checkmate' ? '#' : checkStatus === 'check' ? '+' : ''
+    notation += suffix
     return notation
   }
 
   // 其他棋子的走法
   let notation = piece.type.charAt(0).toUpperCase()
+
+  // 计算消歧信息（当存在多个同类型的棋子可以移动到同一位置时）
+  const disambiguationSuffix = calculateDisambiguation(board, piece, toRow, toCol, fromRow, fromCol)
+  notation += disambiguationSuffix
 
   // 添加吃子标记
   if (isCapture) {
@@ -648,5 +665,62 @@ export const generateMoveNotation = (
     notation += `=${promotion.charAt(0).toUpperCase()}`
   }
 
+  // 添加将棋/将死标记
+  const suffix = checkStatus === 'checkmate' ? '#' : checkStatus === 'check' ? '+' : ''
+  notation += suffix
+
   return notation
+}
+
+/**
+ * 计算棋子消歧所需的信息
+ * 当多个相同类型的棋子可以移动到同一位置时，需要添加起始文件或等级来消除歧义
+ */
+const calculateDisambiguation = (
+  board: Board,
+  piece: Piece,
+  toRow: number,
+  toCol: number,
+  fromRow: number,
+  fromCol: number,
+): string => {
+  // 王和兵不需要消歧
+  if (piece.type === 'king' || piece.type === 'pawn') {
+    return ''
+  }
+
+  // 找出所有可以移动到目标位置的同类棋子
+  const candidates: Array<{ row: number; col: number }> = []
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = board[r]?.[c]
+      // 跳过起始位置的棋子和不同类型/颜色的棋子
+      if ((r === fromRow && c === fromCol) || !p || p.type !== piece.type || p.color !== piece.color) {
+        continue
+      }
+
+      // 检查这个棋子是否可以移动到目标位置
+      const candidateMoves = getPieceMoves(board, r, c)
+      const canMove = candidateMoves.some((m) => m.row === toRow && m.col === toCol)
+      if (canMove) {
+        candidates.push({ row: r, col: c })
+      }
+    }
+  }
+
+  // 如果只有一个候选者（或没有其他候选者），不需要消歧
+  if (candidates.length === 0) {
+    return ''
+  }
+
+  // 检查是否所有候选者都在不同的文件上
+  const differentFiles = candidates.every((c) => c.col !== fromCol)
+  if (differentFiles) {
+    // 只需要添加起始文件
+    return String.fromCharCode(97 + fromCol)
+  }
+
+  // 否则添加起始等级
+  return String(8 - fromRow)
 }
