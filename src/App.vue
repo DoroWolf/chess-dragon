@@ -17,7 +17,7 @@
               :aria-label="getSquareLabel(getActualRow(displayRow - 1), getActualCol(displayCol - 1))">
 
               <img class="square-background base" draggable="false"
-                :src="isWhiteSquare(getActualRow(displayRow - 1), getActualCol(displayCol - 1)) ? '/texture/board/board_white.png' : '/texture/board/board_black.png'"
+                :src="isWhiteSquare(getActualRow(displayRow - 1), getActualCol(displayCol - 1)) ? './texture/board/board_white.png' : './texture/board/board_black.png'"
                 alt="" />
 
               <img v-if="getOverlayTexture(getActualRow(displayRow - 1), getActualCol(displayCol - 1))"
@@ -394,22 +394,22 @@ const isSelectedSquare = (row: number, col: number): boolean => {
 const getPieceImage = (piece: Piece): string => {
   if (piece.type === 'king') {
     if (isDraw.value) {
-      return `/texture/pieces/king_draw_${piece.color}.png`
+      return `./texture/pieces/king_draw_${piece.color}.png`
     }
     if (hasResigned.value && piece.color === hasResigned.value) {
-      return `/texture/pieces/king_checkmate_${piece.color}.png`
+      return `./texture/pieces/king_checkmate_${piece.color}.png`
     }
     if (timeoutWinner.value && piece.color !== timeoutWinner.value) {
-      return `/texture/pieces/king_checkmate_${piece.color}.png`
+      return `./texture/pieces/king_checkmate_${piece.color}.png`
     }
     if (isCheckmate(board.value, piece.color)) {
-      return `/texture/pieces/king_checkmate_${piece.color}.png`
+      return `./texture/pieces/king_checkmate_${piece.color}.png`
     }
     if (isKingInCheck(board.value, piece.color)) {
-      return `/texture/pieces/king_check_${piece.color}.png`
+      return `./texture/pieces/king_check_${piece.color}.png`
     }
   }
-  return `/texture/pieces/${piece.type}_${piece.color}.png`
+  return `./texture/pieces/${piece.type}_${piece.color}.png`
 }
 
 const isGameOver = computed(() => {
@@ -595,21 +595,21 @@ const applyClockAfterMove = (moverColor: Color, nextTurn: Color, nextBoard: Boar
 
 const getOverlayTexture = (row: number, col: number): string | null => {
   if (isSelectedSquare(row, col)) {
-    return '/texture/board/board_hover.png'
+    return './texture/board/board_hover.png'
   }
 
   const move = possibleMoves.value.find((candidate) => candidate.row === row && candidate.col === col)
 
   if (move) {
     if (isDragging.value && hoverSquare.value?.row === row && hoverSquare.value?.col === col) {
-      return '/texture/board/board_hover.png'
+      return './texture/board/board_hover.png'
     }
 
     const targetPiece = board.value[row]?.[col] ?? null
     if (targetPiece !== null) {
-      return '/texture/board/board_capture.png'
+      return './texture/board/board_capture.png'
     }
-    return '/texture/board/board_placeable.png'
+    return './texture/board/board_placeable.png'
   }
 
   return null
