@@ -4,14 +4,7 @@
 
     <!-- 棋盘主面板 -->
     <div class="game-panel">
-      <!-- 控制面板 / 翻转按钮 -->
-      <div class="controls">
-        <button class="flip-btn" type="button" @click="isFlipped = !isFlipped">
-          🔄 翻转棋盘
-        </button>
-      </div>
-
-      <div class="board-frame">
+      <div class="board-frame" :class="{ 'coordinates-outside': coordinateLabelMode === 'outside' }">
         <div class="board-grid" ref="boardGridRef">
           <template v-for="displayRow in 8" :key="`rank-${displayRow}`">
             <button v-for="displayCol in 8" :key="`${displayRow}-${displayCol}`" type="button" class="board-square"
@@ -35,12 +28,12 @@
                 }" :src="getPieceImage(board[getActualRow(displayRow - 1)]?.[getActualCol(displayCol - 1)]!)"
                 :alt="board[getActualRow(displayRow - 1)]?.[getActualCol(displayCol - 1)]!.type" />
 
-              <div v-if="displayCol === 1" class="coordinate-label rank"
+              <div v-if="coordinateLabelMode === 'inside' && displayCol === 1" class="coordinate-label rank"
                 :class="isWhiteSquare(getActualRow(displayRow - 1), getActualCol(displayCol - 1)) ? 'text-black' : 'text-white'">
                 {{ 8 - getActualRow(displayRow - 1) }}
               </div>
 
-              <div v-if="displayRow === 8" class="coordinate-label file"
+              <div v-if="coordinateLabelMode === 'inside' && displayRow === 8" class="coordinate-label file"
                 :class="isWhiteSquare(getActualRow(displayRow - 1), getActualCol(displayCol - 1)) ? 'text-black' : 'text-white'">
                 {{ String.fromCharCode(97 + getActualCol(displayCol - 1)) }}
               </div>
@@ -49,6 +42,22 @@
           <div v-if="promotionPending" class="promotion-overlay" @click="cancelPromotion"></div>
           <Promotion v-if="promotionPending" :color="promotionPending.color" :style="promotionStyle"
             @select="applyPromotion" />
+        </div>
+
+        <div v-if="coordinateLabelMode === 'outside'" class="coordinates-outside-layer">
+          <div class="coordinate-bottom-row">
+            <span v-for="displayCol in 8" :key="`file-${displayCol}`" class="coordinate-label outer-file"
+              :style="{ left: `${(displayCol - 0.5) * 12.5}%` }">
+              {{ getDisplayedFile(displayCol) }}
+            </span>
+          </div>
+
+          <div class="coordinate-side-col">
+            <span v-for="displayRow in 8" :key="`rank-${displayRow}`" class="coordinate-label outer-rank"
+              :style="{ top: `${(displayRow - 0.5) * 12.5}%` }">
+              {{ getDisplayedRank(displayRow) }}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -59,7 +68,9 @@
 
     <!-- 侧边栏 -->
     <Sidebar :move-history="moveHistory" :current-turn="currentTurn" :game-status="gameStatusMessage"
-      :halfmove-clock="halfmoveClock" :position-count="getPositionCount()" :is-game-over="isGameOver" @undo="handleUndo"
+      :halfmove-clock="halfmoveClock" :position-count="getPositionCount()" :is-game-over="isGameOver"
+      :is-flipped="isFlipped" v-model:is-sound-enabled="isSoundEnabled"
+      v-model:coordinate-label-mode="coordinateLabelMode" @toggle-flip="isFlipped = !isFlipped" @undo="handleUndo"
       @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" />
   </section>
 </template>
@@ -83,8 +94,10 @@ import {
 import Promotion from './components/Promotion.vue'
 import Sidebar from './components/Sidebar.vue'
 
-// --- 棋盘翻转控制 ---
+// --- 棋盘设置控制 ---
 const isFlipped = ref(false)
+const isSoundEnabled = ref(true)
+const coordinateLabelMode = ref<'off' | 'inside' | 'outside'>('inside')
 
 /** 视觉坐标转为逻辑坐标（行） */
 const getActualRow = (displayRow: number): number => {
@@ -96,7 +109,14 @@ const getActualCol = (displayCol: number): number => {
   return isFlipped.value ? 7 - displayCol : displayCol
 }
 
-// --- 音效載入與播放邏輯 ---
+const getDisplayedFile = (displayCol: number): string => {
+  return String.fromCharCode(97 + getActualCol(displayCol - 1))
+}
+
+const getDisplayedRank = (displayRow: number): string => {
+  return `${8 - getActualRow(displayRow - 1)}`
+}
+
 const sounds = {
   move: new Audio('./sound/Move.ogg'),
   capture: new Audio('./sound/Capture.ogg'),
@@ -106,20 +126,17 @@ const sounds = {
   draw: new Audio('./sound/Draw.ogg'),
 }
 
-/** 播放指定音效，若前一次播放尚未結束會自動重設時間 */
 const playSound = (soundName: keyof typeof sounds) => {
+  if (!isSoundEnabled.value) return
+
   const audio = sounds[soundName]
   if (audio) {
     audio.currentTime = 0
-    audio.play().catch(() => {
-      // 防止瀏覽器未互動時阻擋自動播放
-    })
+    audio.play().catch(() => { })
   }
 }
 
-// 玩家掌控的角色顏色（預設為白棋，可依據你的遊戲設計調整）
 const playerColor = ref<Color>('white')
-
 const board = ref<Board>(createInitialBoard())
 const currentTurn = ref<Color>('white')
 const selectedSquare = ref<{ row: number; col: number } | null>(null)
@@ -129,11 +146,9 @@ const lastMove = ref<{ from: { row: number; col: number }; to: { row: number; co
 const positionHistory = ref<string[]>([getPositionKey(board.value, currentTurn.value, lastMove.value)])
 const halfmoveClock = ref<number>(0)
 
-// 走棋记录和棋盘历史（用于悔棋）
 const moveHistory = ref<string[]>([])
 const boardHistory = ref<Array<{ board: Board; currentTurn: Color; lastMove: { from: { row: number; col: number }; to: { row: number; col: number } } | null; halfmoveClock: number }>>([])
 
-// 游戏状态
 const isAgreedDraw = ref(false)
 const hasResigned = ref<Color | null>(null)
 const gameStatusMessage = computed(() => {
@@ -148,7 +163,7 @@ const gameStatusMessage = computed(() => {
   }
 
   if (isDraw.value) {
-    return '游戏和棋'
+    return '和棋'
   }
 
   return undefined
@@ -227,20 +242,15 @@ const isDraw = computed(
 
 const isGameOver = computed(() => {
   return (
-    !!hasResigned.value || // 包含投降
-    isDraw.value ||        // 包含和棋（包含了 isAgreedDraw 及各種規則和棋）
-    isCheckmate(board.value, currentTurn.value) // 包含將死
+    !!hasResigned.value ||
+    isDraw.value ||
+    isCheckmate(board.value, currentTurn.value)
   )
 })
 const canInteract = computed(() => !isGameOver.value)
 
-/**
- * 走棋後判斷局勢並播放相對應的音效
- */
 const triggerGameStateAudio = (isCapture: boolean, nextTurn: Color, nextBoard: Board) => {
-  // 1. 判斷是否將死
   if (isCheckmate(nextBoard, nextTurn)) {
-    // 被將死者為 nextTurn，若 nextTurn 是我方代表我方輸了
     if (nextTurn === playerColor.value) {
       playSound('defeat')
     } else {
@@ -249,7 +259,6 @@ const triggerGameStateAudio = (isCapture: boolean, nextTurn: Color, nextBoard: B
     return
   }
 
-  // 2. 判斷是否和棋
   const checkDraw =
     isStalemate(nextBoard, nextTurn, { lastMove: lastMove.value, enPassantTarget: getEnPassantTarget(lastMove.value) }) ||
     hasInsufficientMaterial(nextBoard) ||
@@ -259,13 +268,11 @@ const triggerGameStateAudio = (isCapture: boolean, nextTurn: Color, nextBoard: B
     return
   }
 
-  // 3. 判斷是否將軍
   if (isKingInCheck(nextBoard, nextTurn)) {
     playSound('check')
     return
   }
 
-  // 4. 判斷吃子或一般走棋
   if (isCapture) {
     playSound('capture')
   } else {
@@ -337,7 +344,6 @@ const applyPromotion = (newType: string) => {
 
   const nextTurn = currentTurn.value === 'white' ? 'black' : 'white'
 
-  // 检测将棋状态
   let checkStatus: 'check' | 'checkmate' | undefined = undefined
   if (isCheckmate(nextBoard, nextTurn)) {
     checkStatus = 'checkmate'
@@ -345,7 +351,6 @@ const applyPromotion = (newType: string) => {
     checkStatus = 'check'
   }
 
-  // 记录走棋
   const notation = generateMoveNotation(
     board.value,
     from.row,
@@ -373,7 +378,6 @@ const applyPromotion = (newType: string) => {
   selectedSquare.value = null
   currentTurn.value = nextTurn
 
-  // 升變完成後觸發音效
   triggerGameStateAudio(isCapture, nextTurn, nextBoard)
 }
 
@@ -424,7 +428,6 @@ const handleSquareClick = (row: number, col: number): void => {
       sourceRow[selected.col] = null
     }
 
-    // 检测将棋状态
     let checkStatus: 'check' | 'checkmate' | undefined = undefined
     if (isCheckmate(nextBoard, nextTurn)) {
       checkStatus = 'checkmate'
@@ -432,7 +435,6 @@ const handleSquareClick = (row: number, col: number): void => {
       checkStatus = 'check'
     }
 
-    // 记录走棋
     const notation = generateMoveNotation(
       board.value,
       selected.row,
@@ -462,7 +464,6 @@ const handleSquareClick = (row: number, col: number): void => {
     selectedSquare.value = null
     currentTurn.value = nextTurn
 
-    // 觸發對應音效
     triggerGameStateAudio(isCapture, nextTurn, nextBoard)
   } else {
     if (targetPiece && targetPiece.color === currentTurn.value) {
@@ -599,7 +600,6 @@ const handleUndo = (): void => {
 
   moveHistory.value.pop()
 
-  // 从位置历史中移除最后一个位置
   if (positionHistory.value.length > 1) {
     positionHistory.value.pop()
   }
@@ -612,7 +612,6 @@ const handleUndo = (): void => {
 const handleResign = (): void => {
   hasResigned.value = currentTurn.value
 
-  // 播放音效
   if (currentTurn.value === playerColor.value) {
     playSound('defeat')
   } else {
@@ -626,17 +625,11 @@ const handleDrawOffer = (): void => {
 }
 
 const handleRestart = (): void => {
-  // 1. 重置棋盘与回合
   board.value = createInitialBoard()
   currentTurn.value = 'white'
-
-  // 2. 自动翻转棋盘
   isFlipped.value = !isFlipped.value
-
-  // 3. 将己方颜色切换为黑方（或在白/黑之间自动切替）
   playerColor.value = playerColor.value === 'white' ? 'black' : 'white'
 
-  // 4. 重置游戏记录与标志位
   selectedSquare.value = null
   hoverSquare.value = null
   lastMove.value = null
@@ -648,7 +641,6 @@ const handleRestart = (): void => {
   promotionPending.value = null
   promotionStyle.value = {}
 
-  // 5. 重新初始化局面历史记录
   positionHistory.value = [getPositionKey(board.value, currentTurn.value, lastMove.value)]
 }
 </script>
@@ -682,39 +674,25 @@ const handleRestart = (): void => {
   box-sizing: border-box;
 }
 
-.controls {
-  margin-bottom: 12px;
-}
-
-.flip-btn {
-  padding: 8px 16px;
-  font-size: 0.9rem;
-  font-weight: bold;
-  background-color: #ffffff;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
-}
-
-.flip-btn:hover {
-  background-color: #f5f5f5;
-  border-color: #999;
-}
-
 .game-container.global-dragging,
 .game-container.global-dragging * {
   cursor: grabbing !important;
 }
 
 .board-frame {
+  position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   max-width: calc(100vh - 120px);
   width: 80vmin;
   margin: 0 auto;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.board-frame.coordinates-outside {
+  padding: 0;
 }
 
 .board-grid {
@@ -809,6 +787,48 @@ const handleRestart = (): void => {
   pointer-events: none;
   z-index: 5;
   user-select: none;
+}
+
+.coordinates-outside-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.coordinate-bottom-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1.25rem;
+  height: 1rem;
+}
+
+.coordinate-side-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1.25rem;
+  /* 定位至棋盘左侧外侧 */
+  width: 1rem;
+}
+
+.coordinate-label.outer-file {
+  position: absolute;
+  /* (displayCol - 0.5) * 12.5% 已准确定位到格子中心，结合 translateX(-50%) 实现完美居中 */
+  transform: translateX(-50%);
+  font-size: 0.85rem;
+  color: #333;
+  text-align: center;
+}
+
+.coordinate-label.outer-rank {
+  position: absolute;
+  /* (displayRow - 0.5) * 12.5% 已准确定位到格子中心，结合 translateY(-50%) 实现完美居中 */
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  color: #333;
+  text-align: center;
+  width: 100%;
 }
 
 .coordinate-label.rank {

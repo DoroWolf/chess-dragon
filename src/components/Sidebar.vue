@@ -2,7 +2,7 @@
   <aside class="sidebar">
     <div class="nes-container game-status">
       <div v-if="gameStatus" class="status-message">{{ gameStatus }}</div>
-      <div v-else class="current-turn">当前轮次：{{ currentTurn === 'white' ? '白棋' : '黑棋' }}</div>
+      <div v-else class="current-turn">{{ currentTurn === 'white' ? '白棋' : '黑棋' }}执子</div>
     </div>
 
     <!-- 棋谱显示区 -->
@@ -46,6 +46,57 @@
       </button>
     </div>
 
+    <!-- 设置按钮 -->
+    <div class="settings-action">
+      <button type="button" class="nes-btn is-normal settings-toggle-btn" @click="showSettingsModal = true">
+        设置
+      </button>
+    </div>
+
+    <!-- 设置弹窗 Modal -->
+    <div v-if="showSettingsModal" class="modal-backdrop">
+      <div class="nes-container dialog-box settings-dialog">
+        <p class="dialog-title">游戏设置</p>
+
+        <div class="settings-list">
+          <!-- 翻转棋盘（按钮形式） -->
+          <div class="setting-item">
+            <span class="setting-label">棋盘方向</span>
+            <button type="button" class="nes-btn is-primary flip-btn" @click="$emit('toggle-flip')">
+              翻转棋盘
+            </button>
+          </div>
+
+          <!-- 音效开关 -->
+          <div class="setting-item">
+            <span class="setting-label">音效</span>
+            <label class="nes-pointer">
+              <input type="checkbox" class="nes-checkbox" :checked="isSoundEnabled"
+                @change="$emit('update:isSoundEnabled', ($event.target as HTMLInputElement).checked)" />
+              <span></span>
+            </label>
+          </div>
+
+          <!-- 棋盘坐标标记 -->
+          <div class="setting-item">
+            <span class="setting-label">棋盘标志</span>
+            <div class="nes-select is-small select-wrapper">
+              <select :value="coordinateLabelMode"
+                @change="$emit('update:coordinateLabelMode', ($event.target as HTMLSelectElement).value)">
+                <option value="off">关闭</option>
+                <option value="inside">内侧</option>
+                <option value="outside">外侧</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-buttons">
+          <button type="button" class="nes-btn is-primary" @click="showSettingsModal = false">完成</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 二次确认弹窗 Modal -->
     <div v-if="showConfirmModal" class="modal-backdrop">
       <div class="nes-container dialog-box">
@@ -71,6 +122,9 @@ interface Props {
   halfmoveClock?: number
   positionCount?: number
   isGameOver?: boolean
+  isFlipped: boolean
+  isSoundEnabled: boolean
+  coordinateLabelMode: 'off' | 'inside' | 'outside'
 }
 
 interface MovePair {
@@ -84,6 +138,9 @@ const props = withDefaults(defineProps<Props>(), {
   halfmoveClock: 0,
   positionCount: 1,
   isGameOver: false,
+  isFlipped: false,
+  isSoundEnabled: true,
+  coordinateLabelMode: 'inside',
 })
 
 const emit = defineEmits<{
@@ -91,11 +148,15 @@ const emit = defineEmits<{
   draw: []
   resign: []
   restart: []
+  'toggle-flip': []
+  'update:isSoundEnabled': [value: boolean]
+  'update:coordinateLabelMode': [value: 'off' | 'inside' | 'outside']
 }>()
 
 const copyStatusText = ref('复制')
 
 const showConfirmModal = ref(false)
+const showSettingsModal = ref(false)
 const confirmMessage = ref('')
 const pendingAction = ref<'draw' | 'resign' | null>(null)
 
@@ -168,38 +229,10 @@ const copyPGN = async () => {
   }
 }
 
-/**
- * 验证 PGN 记号的有效性
- * 处理可能导致歧义的情况，确保记号符合标准 PGN 格式
- */
-const validateAndImproveNotation = (notation: string): string => {
-  // 验证王车易位记号
-  if (notation === 'O-O' || notation === 'O-O-O' || notation === 'O-O+' || notation === 'O-O-O+' ||
-    notation === 'O-O#' || notation === 'O-O-O#') {
-    return notation
-  }
-
-  // 验证兵的走法（可以是 'e4', 'exd5', 'e8=Q+' 等）
-  if (/^[a-h]/.test(notation)) {
-    return notation
-  }
-
-  // 验证其他棋子的走法（K, Q, R, B, N 开头）
-  if (/^[KQRBN]/.test(notation)) {
-    return notation
-  }
-
-  // 如果以上都不匹配，返回原始记号
-  return notation
-}
-
-// 按钮点击处理
 const handleDrawClick = () => {
   if (isClaimableDraw.value) {
-    // 符合规则，直接宣告和棋，无需确认
     emit('draw')
   } else {
-    // 正常申请和棋，弹出确认框
     confirmMessage.value = '确定要向对手申请和棋吗？'
     pendingAction.value = 'draw'
     showConfirmModal.value = true
@@ -304,7 +337,6 @@ const cancelConfirm = () => {
   background-color: #fffacd;
 }
 
-/* 对局结果样式 */
 .game-result-move-pair {
   background-color: #e9ecef;
   margin-top: 0.25rem;
@@ -322,7 +354,7 @@ const cancelConfirm = () => {
 }
 
 .status-message {
-  color: #e44536;
+  color: #212529;
   font-size: 0.9rem;
 }
 
@@ -345,7 +377,16 @@ const cancelConfirm = () => {
   padding: 0.5rem !important;
 }
 
-/* 控制按钮排为单行，并缩小内边距和字号 */
+.settings-action {
+  width: 100%;
+}
+
+.settings-toggle-btn {
+  width: 100%;
+  font-size: 0.8rem !important;
+  padding: 0.4rem !important;
+}
+
 .button-group {
   display: flex;
   flex-direction: row;
@@ -373,7 +414,8 @@ const cancelConfirm = () => {
   cursor: not-allowed;
 }
 
-.button-group .nes-btn:not(:disabled):hover {
+.button-group .nes-btn:not(:disabled):hover,
+.settings-toggle-btn:hover {
   transform: translateY(-2px);
 }
 
@@ -419,14 +461,14 @@ const cancelConfirm = () => {
 .dialog-box {
   background: white;
   padding: 1.5rem;
-  max-width: 260px;
+  max-width: 280px;
   width: 90%;
   text-align: center;
 }
 
 .dialog-title {
   font-weight: bold;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .dialog-message {
@@ -444,5 +486,67 @@ const cancelConfirm = () => {
   flex: 1;
   font-size: 0.8rem;
   padding: 0.25rem 0.5rem;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.setting-label {
+  font-weight: bold;
+}
+
+.flip-btn {
+  font-size: 0.7rem !important;
+  padding: 2px 8px !important;
+}
+
+.setting-item .nes-pointer,
+.setting-item .nes-checkbox,
+.setting-item .nes-checkbox+span {
+  cursor: default !important;
+}
+
+.select-wrapper {
+  width: auto;
+}
+
+.select-wrapper.nes-select {
+  cursor: default !important;
+}
+
+.select-wrapper select {
+  cursor: default !important;
+  font-size: 0.75rem !important;
+  height: auto !important;
+  padding: 2px 8px !important;
+
+  /* 实心边框设置 */
+  border: 2px solid #212529 !important;
+  /* 使用实心线代替 NES 的图像边框 */
+  border-image: none !important;
+  /* 移除 NES CSS 默认的像素 image-border */
+  border-radius: 0;
+  /* 保留直角风格 */
+  background-color: #fff;
+
+  /* 取消 CSS pixelated 光标 */
+  cursor: default !important;
+}
+
+/* 覆盖 NES 模拟的下拉箭头 Hover 时的像素光标 */
+.select-wrapper.nes-select::after {
+  display: none !important;
 }
 </style>
