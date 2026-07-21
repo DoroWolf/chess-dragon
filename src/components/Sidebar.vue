@@ -9,23 +9,15 @@
     <div class="nes-container with-title">
       <div class="title-bar">
         <p class="title">棋谱</p>
-        <button
-          type="button"
-          class="nes-btn is-primary copy-btn"
-          :disabled="moveHistory.length === 0"
-          @click="copyPGN"
-        >
+        <button type="button" class="nes-btn is-primary copy-btn" :disabled="moveHistory.length === 0" @click="copyPGN">
           {{ copyStatusText }}
         </button>
       </div>
 
       <div class="moves-list">
         <!-- 按回合渲染：每行格式为 "1. e4 e5" -->
-        <div
-          v-for="turn in movePairs"
-          :key="turn.number"
-          :class="['move-pair', { 'last-move-pair': turn.number === movePairs.length }]"
-        >
+        <div v-for="turn in movePairs" :key="turn.number"
+          :class="['move-pair', { 'last-move-pair': turn.number === movePairs.length }]">
           <span class="move-number">{{ turn.number }}.</span>
           <span class="move-white">{{ turn.white }}</span>
           <span class="move-black">{{ turn.black || '' }}</span>
@@ -36,28 +28,13 @@
 
     <!-- 控制按钮 -->
     <div class="button-group">
-      <button
-        type="button"
-        class="nes-btn is-warning"
-        :disabled="isButtonsDisabled"
-        @click="$emit('undo')"
-      >
+      <button type="button" class="nes-btn is-warning" :disabled="isButtonsDisabled" @click="$emit('undo')">
         悔棋
       </button>
-      <button
-        type="button"
-        class="nes-btn is-success"
-        :disabled="isButtonsDisabled"
-        @click="handleDrawClick"
-      >
+      <button type="button" class="nes-btn is-success" :disabled="isButtonsDisabled" @click="handleDrawClick">
         {{ isClaimableDraw ? '宣告和棋' : '申请和棋' }}
       </button>
-      <button
-        type="button"
-        class="nes-btn is-error"
-        :disabled="isButtonsDisabled"
-        @click="handleResignClick"
-      >
+      <button type="button" class="nes-btn is-error" :disabled="isButtonsDisabled" @click="handleResignClick">
         投降
       </button>
     </div>
@@ -302,6 +279,15 @@ const cancelConfirm = () => {
   font-size: 0.9rem;
 }
 
+.nes-btn {
+  font-family: 'Unifont', system-ui;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  border: 2px solid #212529;
+  cursor: pointer;
+  text-align: center;
+}
+
 /* 修改：控制按钮排为单行，并缩小内边距和字号 */
 .button-group {
   display: flex;
@@ -313,13 +299,7 @@ const cancelConfirm = () => {
 .button-group .nes-btn {
   flex: 1;
   width: auto;
-  font-family: 'Unifont', system-ui;
-  font-size: 0.7rem;
   padding: 0.35rem 0.15rem;
-  white-space: nowrap;
-  cursor: pointer;
-  border: 2px solid #212529;
-  text-align: center;
 }
 
 .button-group .nes-btn:disabled,
