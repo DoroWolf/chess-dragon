@@ -26,8 +26,6 @@
         <div v-if="gameResult" class="move-pair game-result-move-pair">
           <span class="move-number game-result-text">{{ gameResult }}</span>
         </div>
-
-        <div v-if="moveHistory.length === 0" class="no-moves">游戏未开始</div>
       </div>
     </div>
 
@@ -177,8 +175,8 @@ const copyPGN = async () => {
  */
 const validateAndImproveNotation = (notation: string): string => {
   // 验证王车易位记号
-  if (notation === 'O-O' || notation === 'O-O-O' || notation === 'O-O+' || notation === 'O-O-O+' || 
-      notation === 'O-O#' || notation === 'O-O-O#') {
+  if (notation === 'O-O' || notation === 'O-O-O' || notation === 'O-O+' || notation === 'O-O-O+' ||
+    notation === 'O-O#' || notation === 'O-O-O#') {
     return notation
   }
 
@@ -316,14 +314,6 @@ const cancelConfirm = () => {
 .game-result-text {
   color: #212529;
   width: auto;
-}
-
-.no-moves {
-  text-align: center;
-  color: #999;
-  padding: 1rem;
-  font-style: italic;
-  font-family: 'Unifont', system-ui;
 }
 
 .game-status {
