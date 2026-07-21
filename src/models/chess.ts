@@ -696,7 +696,12 @@ const calculateDisambiguation = (
     for (let c = 0; c < 8; c++) {
       const p = board[r]?.[c]
       // 跳过起始位置的棋子和不同类型/颜色的棋子
-      if ((r === fromRow && c === fromCol) || !p || p.type !== piece.type || p.color !== piece.color) {
+      if (
+        (r === fromRow && c === fromCol) ||
+        !p ||
+        p.type !== piece.type ||
+        p.color !== piece.color
+      ) {
         continue
       }
 

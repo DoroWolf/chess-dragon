@@ -145,7 +145,6 @@ const pgnText = computed(() => {
 
   if (!moves) return ''
 
-  // PGN 格式：所有走法后跟对局结果
   return gameResult.value ? `${moves} ${gameResult.value}` : moves
 })
 
