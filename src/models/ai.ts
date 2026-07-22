@@ -1,26 +1,25 @@
-import type { Board, Color, Square, Move } from './chess'
+import type {
+  Board,
+  Color,
+  Square,
+  Move,
+  Piece,
+  PieceType,
+  MoveOptions,
+} from './chess'
 import {
-  cloneBoard,
-  getLegalMoves,
+  getPieceMoves,
   isKingInCheck,
-  isCheckmate,
-  isStalemate,
-  hasInsufficientMaterial,
-  isWhiteSquare,
   getEnPassantTarget,
+  isWhiteSquare,
 } from './chess'
 
 // ============================================================
-// AI 难度等级与水平
+// Types
 // ============================================================
 export type AIDifficulty = 1 | 2 | 3 | 4 | 5
-
-// 下棋风格
 export type AIStyle = 'balanced' | 'aggressive' | 'defensive' | 'unpredictable'
 
-// ============================================================
-// AI 走法（包含起始位置和目标位置的完整信息）
-// ============================================================
 export interface AIDetailedMove {
   fromRow: number
   fromCol: number
@@ -29,10 +28,11 @@ export interface AIDetailedMove {
   special?: 'castle' | 'enPassant'
   rookFrom?: Square
   rookTo?: Square
+  promotion?: 'queen' | 'knight' | 'rook' | 'bishop'
 }
 
 // ============================================================
-// 棋子基础价值
+// Constants
 // ============================================================
 const PIECE_VALUES: Record<string, number> = {
   pawn: 100,
@@ -43,12 +43,34 @@ const PIECE_VALUES: Record<string, number> = {
   king: 20000,
 }
 
-// ============================================================
-// 位置评估表（Piece-Square Tables）
-// 视角：白方在底部（row 7-0），所以表中的 row 0 对应棋盘底部
-// ============================================================
+const PIECE_TYPE_INDEX: Record<string, number> = {
+  pawn: 0,
+  knight: 1,
+  bishop: 2,
+  rook: 3,
+  queen: 4,
+  king: 5,
+}
 
-// 兵的进阶位置表
+const COLOR_INDEX: Record<string, number> = {
+  white: 0,
+  black: 1,
+}
+
+const TT_EXACT = 0
+const TT_ALPHA = 1 // upper bound (score <= alpha, fail-low)
+const TT_BETA = 2 // lower bound (score >= beta, fail-high)
+
+const MAX_DEPTH = 64
+const TT_SIZE = 1 << 17 // 131072 entries
+const TT_MASK = TT_SIZE - 1
+
+const INF = 999999
+const MATE_SCORE = 99999
+
+// ============================================================
+// Piece-Square Tables (same as original)
+// ============================================================
 const PAWN_TABLE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0],
   [50, 50, 50, 50, 50, 50, 50, 50],
@@ -60,7 +82,6 @@ const PAWN_TABLE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0],
 ]
 
-// 马的位置表
 const KNIGHT_TABLE: number[][] = [
   [-50, -40, -30, -30, -30, -30, -40, -50],
   [-40, -20, 0, 0, 0, 0, -20, -40],
@@ -72,7 +93,6 @@ const KNIGHT_TABLE: number[][] = [
   [-50, -40, -30, -30, -30, -30, -40, -50],
 ]
 
-// 象的位置表
 const BISHOP_TABLE: number[][] = [
   [-20, -10, -10, -10, -10, -10, -10, -20],
   [-10, 0, 0, 0, 0, 0, 0, -10],
@@ -84,7 +104,6 @@ const BISHOP_TABLE: number[][] = [
   [-20, -10, -10, -10, -10, -10, -10, -20],
 ]
 
-// 车的位置表
 const ROOK_TABLE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0],
   [5, 10, 10, 10, 10, 10, 10, 5],
@@ -96,7 +115,6 @@ const ROOK_TABLE: number[][] = [
   [0, 0, 0, 5, 5, 0, 0, 0],
 ]
 
-// 后的位置表
 const QUEEN_TABLE: number[][] = [
   [-20, -10, -10, -5, -5, -10, -10, -20],
   [-10, 0, 0, 0, 0, 0, 0, -10],
@@ -108,7 +126,6 @@ const QUEEN_TABLE: number[][] = [
   [-20, -10, -10, -5, -5, -10, -10, -20],
 ]
 
-// 王中盘位置表
 const KING_MIDDLE_TABLE: number[][] = [
   [-30, -40, -40, -50, -50, -40, -40, -30],
   [-30, -40, -40, -50, -50, -40, -40, -30],
@@ -120,7 +137,6 @@ const KING_MIDDLE_TABLE: number[][] = [
   [20, 30, 10, 0, 0, 10, 30, 20],
 ]
 
-// 王残局位置表（当局面简化时鼓励王走向中心）
 const KING_ENDGAME_TABLE: number[][] = [
   [-50, -40, -30, -20, -20, -30, -40, -50],
   [-30, -20, -10, 0, 0, -10, -20, -30],
@@ -133,63 +149,294 @@ const KING_ENDGAME_TABLE: number[][] = [
 ]
 
 // ============================================================
-// 获取某个棋子类型的位置表值
+// Seeded PRNG for Zobrist keys
 // ============================================================
-function getPiecePositionValue(pieceType: string, row: number, col: number, color: Color): number {
-  // 对于黑方，需要翻转行号
-  const adjustedRow = color === 'white' ? row : 7 - row
-  const adjustedCol = color === 'white' ? col : 7 - col
+function xorshift32(state: number): () => number {
+  return () => {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    return state >>> 0
+  }
+}
 
-  switch (pieceType) {
-    case 'pawn':
-      return PAWN_TABLE[adjustedRow]![adjustedCol]!
-    case 'knight':
-      return KNIGHT_TABLE[adjustedRow]![adjustedCol]!
-    case 'bishop':
-      return BISHOP_TABLE[adjustedRow]![adjustedCol]!
-    case 'rook':
-      return ROOK_TABLE[adjustedRow]![adjustedCol]!
-    case 'queen':
-      return QUEEN_TABLE[adjustedRow]![adjustedCol]!
-    case 'king':
-      // 残局判定：如果局面简化，使用残局王表
-      return 0 // 在 evaluateBoard 中根据阶段动态使用
-    default:
-      return 0
+const rng = xorshift32(0xDEADBEEF)
+
+// ============================================================
+// Zobrist Hashing Tables
+// ============================================================
+// zobristPiece[pieceTypeIdx][colorIdx][row * 8 + col]
+const zobristPiece: number[][][] = Array.from({ length: 6 }, () =>
+  Array.from({ length: 2 }, () => new Array(64).fill(0)),
+)
+// zobristEnPassant[file] - only for the file where en passant is possible
+const zobristEnPassant: number[] = new Array(8).fill(0)
+// zobristBlackToMove
+let zobristBlackToMove = 0
+
+// Initialize all Zobrist keys
+;(function initZobrist() {
+  for (let pt = 0; pt < 6; pt++) {
+    for (let c = 0; c < 2; c++) {
+      for (let sq = 0; sq < 64; sq++) {
+        zobristPiece[pt]![c]![sq] = rng()
+      }
+    }
+  }
+  for (let f = 0; f < 8; f++) {
+    zobristEnPassant[f] = rng()
+  }
+  zobristBlackToMove = rng()
+})()
+
+// ============================================================
+// Transposition Table
+// ============================================================
+interface TTEntry {
+  hash: number // full hash for verification
+  depth: number
+  score: number
+  flag: number // TT_EXACT | TT_ALPHA | TT_BETA
+  bestMove: AIDetailedMove | null
+}
+
+const tt: (TTEntry | null)[] = new Array(TT_SIZE).fill(null)
+let ttHits = 0
+
+function probeTT(hash: number, depth: number, alpha: number, beta: number): {
+  hit: boolean
+  score: number
+  bestMove: AIDetailedMove | null
+} {
+  const idx = hash & TT_MASK
+  const entry = tt[idx]
+  if (entry && entry.hash === hash && entry.depth >= depth) {
+    ttHits++
+    if (entry.flag === TT_EXACT) {
+      return { hit: true, score: entry.score, bestMove: entry.bestMove }
+    }
+    if (entry.flag === TT_ALPHA && entry.score <= alpha) {
+      return { hit: true, score: alpha, bestMove: entry.bestMove }
+    }
+    if (entry.flag === TT_BETA && entry.score >= beta) {
+      return { hit: true, score: beta, bestMove: entry.bestMove }
+    }
+  }
+  return { hit: false, score: 0, bestMove: entry?.bestMove ?? null }
+}
+
+function storeTT(
+  hash: number,
+  depth: number,
+  score: number,
+  flag: number,
+  bestMove: AIDetailedMove | null,
+): void {
+  const idx = hash & TT_MASK
+  const existing = tt[idx]
+  // Always replace strategy (standard for chess)
+  // Except: don't replace an exact entry at the same depth with a lower-depth entry
+  if (existing && existing.hash === hash && existing.depth > depth && existing.flag === TT_EXACT) {
+    return
+  }
+  tt[idx] = { hash, depth, score, flag, bestMove }
+}
+
+// ============================================================
+// Killer Moves & History Table
+// ============================================================
+// killerMoves[depth][slot 0..1]
+const killerMoves: (AIDetailedMove | null)[][] = Array.from({ length: MAX_DEPTH }, () => [
+  null,
+  null,
+])
+
+// historyTable[colorIdx][fromRow][fromCol][toRow][toCol]
+const historyTable: number[][][][][] = Array.from({ length: 2 }, () =>
+  Array.from({ length: 8 }, () =>
+    Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, () => new Array(8).fill(0)),
+    ),
+  ),
+)
+
+function recordKillerMove(move: AIDetailedMove, depth: number): void {
+  if (move.special) return // don't store special moves (castling, en passant)
+  const from = board[move.fromRow]?.[move.fromCol]
+  const to = board[move.toRow]?.[move.toCol]
+  if (to) return // don't store captures (they're already ordered by MVV-LVA)
+
+  const slot = killerMoves[depth]!
+  const killer0 = slot[0]
+  if (killer0 && killer0.fromRow === move.fromRow && killer0.fromCol === move.fromCol &&
+    killer0.toRow === move.toRow && killer0.toCol === move.toCol) {
+    return // already stored
+  }
+  slot[1] = killer0 ?? null
+  slot[0] = move
+}
+
+function recordHistory(move: AIDetailedMove, color: Color, depthBonus: number): void {
+  if (move.special) return
+  const piece = board[move.fromRow]?.[move.fromCol]
+  if (!piece) return
+  const ci = COLOR_INDEX[piece.color]!
+  const histRow = historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]!
+  histRow[move.toCol]! += depthBonus
+}
+
+// ============================================================
+// Board Change Tracking (Make/Unmake)
+// ============================================================
+interface BoardChange {
+  row: number
+  col: number
+  oldPiece: Piece | null
+}
+
+function makeChange(
+  board: Board,
+  row: number,
+  col: number,
+  newPiece: Piece | null,
+  changes: BoardChange[],
+): void {
+  changes.push({ row, col, oldPiece: board[row]![col]! })
+  board[row]![col] = newPiece
+}
+
+/**
+ * Make a move on the board, returning changes to undo.
+ * Also returns the new en passant target and whether a pawn was promoted.
+ */
+function makeMove(
+  board: Board,
+  move: AIDetailedMove,
+): {
+  changes: BoardChange[]
+  newEnPassantTarget: { row: number; col: number } | null
+  wasPromotion: boolean
+} {
+  const changes: BoardChange[] = []
+  const piece = board[move.fromRow]![move.fromCol]!
+
+  let newEnPassantTarget: { row: number; col: number } | null = null
+  let wasPromotion = false
+
+  if (move.special === 'castle' && move.rookFrom && move.rookTo) {
+    // Move king
+    makeChange(board, move.toRow, move.toCol, { ...piece, hasMoved: true }, changes)
+    makeChange(board, move.fromRow, move.fromCol, null, changes)
+    // Move rook
+    const rook = board[move.rookFrom.row]![move.rookFrom.col]!
+    makeChange(board, move.rookTo.row, move.rookTo.col, { ...rook, hasMoved: true }, changes)
+    makeChange(board, move.rookFrom.row, move.rookFrom.col, null, changes)
+  } else if (move.special === 'enPassant') {
+    // Move pawn
+    const promotedType = (move.toRow === 0 || move.toRow === 7)
+      ? move.promotion ?? 'queen'
+      : piece.type
+    makeChange(
+      board,
+      move.toRow,
+      move.toCol,
+      { type: promotedType, color: piece.color, hasMoved: true },
+      changes,
+    )
+    makeChange(board, move.fromRow, move.fromCol, null, changes)
+    // Remove captured pawn
+    makeChange(board, move.fromRow, move.toCol, null, changes)
+    wasPromotion = promotedType !== 'pawn'
+  } else {
+    // Normal move (including promotion)
+    const isPawn = piece.type === 'pawn'
+    const isDoublePush = isPawn && Math.abs(move.toRow - move.fromRow) === 2
+    const promotedType = isPawn && (move.toRow === 0 || move.toRow === 7)
+      ? move.promotion ?? 'queen'
+      : piece.type
+
+    makeChange(
+      board,
+      move.toRow,
+      move.toCol,
+      { type: promotedType, color: piece.color, hasMoved: true },
+      changes,
+    )
+    makeChange(board, move.fromRow, move.fromCol, null, changes)
+
+    if (isDoublePush) {
+      newEnPassantTarget = {
+        row: (move.fromRow + move.toRow) >> 1,
+        col: move.fromCol,
+      }
+    }
+    wasPromotion = promotedType !== piece.type
+  }
+
+  return { changes, newEnPassantTarget, wasPromotion }
+}
+
+/**
+ * Undo a move by restoring all changed squares.
+ */
+function unmakeMove(board: Board, changes: BoardChange[]): void {
+  for (let i = changes.length - 1; i >= 0; i--) {
+    const ch = changes[i]!
+    board[ch.row]![ch.col] = ch.oldPiece
   }
 }
 
 // ============================================================
-// 获取所有合法走法（带源坐标）
+// Move Generation (legal moves for a color)
 // ============================================================
-function getAllLegalMovesWithSources(
+function generateLegalMoves(
   board: Board,
   color: Color,
+  enPassantTarget: { row: number; col: number } | null,
+  capturesOnly: boolean,
   lastMove: { from: Square; to: Square } | null,
 ): AIDetailedMove[] {
   const moves: AIDetailedMove[] = []
 
+  // Compute en passant target from lastMove if not provided
+  const epTarget = enPassantTarget ?? getEnPassantTarget(lastMove)
+  const moveOpts: MoveOptions = { enPassantTarget: epTarget, lastMove }
+
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+      const piece = board[row]![col]
       if (!piece || piece.color !== color) continue
 
-      const enPassantTarget = getEnPassantTarget(lastMove)
-      const legalMoves = getLegalMoves(board, row, col, {
-        lastMove,
-        enPassantTarget,
-      })
+      const candidateMoves = getPieceMoves(board, row, col, moveOpts)
 
-      for (const move of legalMoves) {
-        moves.push({
+      for (const m of candidateMoves) {
+        const isCapture = board[m.row]![m.col] !== null || m.special === 'enPassant'
+
+        if (capturesOnly && !isCapture) continue
+
+        const detailedMove: AIDetailedMove = {
           fromRow: row,
           fromCol: col,
-          toRow: move.row,
-          toCol: move.col,
-          special: move.special,
-          rookFrom: move.rookFrom,
-          rookTo: move.rookTo,
-        })
+          toRow: m.row,
+          toCol: m.col,
+          special: m.special,
+          rookFrom: m.rookFrom,
+          rookTo: m.rookTo,
+        }
+
+        // For promotion moves, add queen promotion
+        if (piece.type === 'pawn' && (m.row === 0 || m.row === 7)) {
+          detailedMove.promotion = 'queen'
+        }
+
+        // Test legality using make/unmake
+        const { changes } = makeMove(board, detailedMove)
+        const legal = !isKingInCheck(board, color)
+        unmakeMove(board, changes)
+
+        if (legal) {
+          moves.push(detailedMove)
+        }
       }
     }
   }
@@ -198,140 +445,267 @@ function getAllLegalMovesWithSources(
 }
 
 // ============================================================
-// 在棋盘上模拟执行走法（返回新棋盘，不修改原棋盘）
+// Move Scoring / Ordering
 // ============================================================
-function simulateMove(board: Board, move: AIDetailedMove): Board {
-  const newBoard = cloneBoard(board)
-  const piece = newBoard[move.fromRow]?.[move.fromCol]
-  if (!piece) return newBoard
+const MOVE_SCORE_TT = 10000000
+const MOVE_SCORE_CAPTURE_BASE = 1000000
+const MOVE_SCORE_KILLER_BASE = 900000
+const MOVE_SCORE_KILLER2 = 800000
 
-  if (move.special === 'castle' && move.rookFrom && move.rookTo) {
-    const rook = newBoard[move.rookFrom.row]?.[move.rookFrom.col]
-    newBoard[move.toRow]![move.toCol] = { ...piece, hasMoved: true }
-    newBoard[move.fromRow]![move.fromCol] = null
-    if (rook) {
-      newBoard[move.rookFrom.row]![move.rookFrom.col] = null
-      newBoard[move.rookTo.row]![move.rookTo.col] = { ...rook, hasMoved: true }
-    }
-  } else if (move.special === 'enPassant') {
-    newBoard[move.toRow]![move.toCol] = { ...piece, hasMoved: true }
-    newBoard[move.fromRow]![move.fromCol] = null
-    newBoard[move.fromRow]![move.toCol] = null
-  } else {
-    newBoard[move.toRow]![move.toCol] = { ...piece, hasMoved: true }
-    newBoard[move.fromRow]![move.fromCol] = null
+function scoreMoveForOrdering(
+  move: AIDetailedMove,
+  ttMove: AIDetailedMove | null,
+  board: Board,
+  depth: number,
+): number {
+  // 1. TT best move first
+  if (
+    ttMove &&
+    ttMove.fromRow === move.fromRow &&
+    ttMove.fromCol === move.fromCol &&
+    ttMove.toRow === move.toRow &&
+    ttMove.toCol === move.toCol &&
+    ttMove.special === move.special
+  ) {
+    return MOVE_SCORE_TT
   }
 
-  return newBoard
+  // 2. Captures by MVV-LVA
+  const victim = move.special === 'enPassant'
+    ? board[move.fromRow]![move.toCol]
+    : board[move.toRow]![move.toCol]
+  if (victim) {
+    const attacker = board[move.fromRow]![move.fromCol]
+    const victimVal = PIECE_VALUES[victim.type] ?? 0
+    const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
+    return MOVE_SCORE_CAPTURE_BASE + victimVal * 10 - attackerVal
+  }
+
+  // 3. Promotion
+  if (move.promotion) {
+    return MOVE_SCORE_CAPTURE_BASE + 900 // promote to queen
+  }
+
+  // 4. Killer moves
+  const killer0 = killerMoves[depth]![0]
+  if (
+    killer0 &&
+    killer0.fromRow === move.fromRow &&
+    killer0.fromCol === move.fromCol &&
+    killer0.toRow === move.toRow &&
+    killer0.toCol === move.toCol
+  ) {
+    return MOVE_SCORE_KILLER_BASE
+  }
+  const killer1 = killerMoves[depth]![1]
+  if (
+    killer1 &&
+    killer1.fromRow === move.fromRow &&
+    killer1.fromCol === move.fromCol &&
+    killer1.toRow === move.toRow &&
+    killer1.toCol === move.toCol
+  ) {
+    return MOVE_SCORE_KILLER2
+  }
+
+  // 5. History heuristic
+  const piece = board[move.fromRow]![move.fromCol]
+  if (piece && !move.special) {
+    const ci = COLOR_INDEX[piece.color]!
+    return historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]![move.toCol] ?? 0
+  }
+
+  return 0
 }
 
 // ============================================================
-// 判断是否为残局阶段（用于切换王的位置表）
+// Search state (module-level, reset per search)
+// ============================================================
+let board: Board = []
+let searchColor: Color = 'white'
+let searchStyle: AIStyle = 'balanced'
+let searchHash: number = 0
+let searchStartTime: number = 0
+let searchTimeLimit: number = 0
+let searchStopped: boolean = false
+let searchNodes: number = 0
+let pvLine: AIDetailedMove[] = []
+
+function checkTimeLimit(): boolean {
+  if (searchStopped) return true
+  if (performance.now() - searchStartTime >= searchTimeLimit) {
+    searchStopped = true
+    return true
+  }
+  return false
+}
+
+// ============================================================
+// Compute Zobrist hash from board state
+// ============================================================
+function computeHash(
+  b: Board,
+  currentTurn: Color,
+  enPassantFile: number | null,
+): number {
+  let h = 0
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = b[r]![c]
+      if (p) {
+        const ptIdx = PIECE_TYPE_INDEX[p.type]!
+        const cIdx = COLOR_INDEX[p.color]!
+        h ^= zobristPiece[ptIdx]![cIdx]![r * 8 + c]!
+      }
+    }
+  }
+  if (currentTurn === 'black') {
+    h ^= zobristBlackToMove
+  }
+  if (enPassantFile !== null && enPassantFile >= 0 && enPassantFile < 8) {
+    h ^= zobristEnPassant[enPassantFile]!
+  }
+  return h >>> 0
+}
+
+// ============================================================
+// Incremental hash update for make/unmake
+// ============================================================
+function updateHashMove(
+  hash: number,
+  piece: Piece,
+  fromSq: number,
+  toSq: number,
+  captured: Piece | null,
+  capturedSq: number,
+  oldEpFile: number | null,
+  newEpFile: number | null,
+  sideToMove: Color,
+): number {
+  let h = hash
+  const ptIdx = PIECE_TYPE_INDEX[piece.type]!
+  const cIdx = COLOR_INDEX[piece.color]!
+
+  // Remove piece from source square
+  h ^= zobristPiece[ptIdx]![cIdx]![fromSq]!
+  // Add piece to destination square
+  h ^= zobristPiece[ptIdx]![cIdx]![toSq]!
+
+  // Remove captured piece
+  if (captured) {
+    const capPtIdx = PIECE_TYPE_INDEX[captured.type]!
+    const capCIdx = COLOR_INDEX[captured.color]!
+    h ^= zobristPiece[capPtIdx]![capCIdx]![capturedSq]!
+  }
+
+  // Update en passant file
+  if (oldEpFile !== null) h ^= zobristEnPassant[oldEpFile]!
+  if (newEpFile !== null) h ^= zobristEnPassant[newEpFile]!
+
+  // Toggle side to move
+  h ^= zobristBlackToMove
+
+  return h >>> 0
+}
+
+// ============================================================
+// Fast endgame detection
 // ============================================================
 function isEndgame(board: Board): boolean {
   let totalMaterial = 0
   let queenCount = 0
-
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const piece = board[r]![c]
       if (!piece || piece.type === 'king') continue
       totalMaterial += PIECE_VALUES[piece.type] ?? 0
       if (piece.type === 'queen') queenCount++
     }
   }
-
-  // 双方各剩 <= 1 个后，或总物质 <= 1400（约等于除了王外只有轻子+兵）
   return queenCount <= 1 || totalMaterial <= 1400
 }
 
 // ============================================================
-// 棋盘评估函数
-// @param board 当前棋盘
-// @param perspective 评估视角（通常是 AI 的颜色）
-// @param style AI下棋风格
+// Board Evaluation
 // ============================================================
-function evaluateBoard(
-  board: Board,
-  perspective: Color,
-  style: AIStyle,
-): number {
+function evaluateBoardInternal(b: Board, perspective: Color): number {
   let score = 0
-  const endgame = isEndgame(board)
+  const endgame = isEndgame(b)
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+      const piece = b[row]![col]
       if (!piece) continue
 
       const sign = piece.color === perspective ? 1 : -1
       const baseValue = PIECE_VALUES[piece.type] ?? 0
-
-      // 物质分
       score += sign * baseValue
 
-      // 位置分
       let posValue = 0
       if (piece.type === 'king') {
         const table = endgame ? KING_ENDGAME_TABLE : KING_MIDDLE_TABLE
-        const adjustedRow = piece.color === 'white' ? row : 7 - row
-        const adjustedCol = piece.color === 'white' ? col : 7 - col
-        posValue = table[adjustedRow]![adjustedCol]!
+        const adjRow = piece.color === 'white' ? row : 7 - row
+        const adjCol = piece.color === 'white' ? col : 7 - col
+        posValue = table[adjRow]![adjCol]!
       } else {
-        posValue = getPiecePositionValue(piece.type, row, col, piece.color)
+        const adjRow = piece.color === 'white' ? row : 7 - row
+        const adjCol = piece.color === 'white' ? col : 7 - col
+        switch (piece.type) {
+          case 'pawn':
+            posValue = PAWN_TABLE[adjRow]![adjCol]!
+            break
+          case 'knight':
+            posValue = KNIGHT_TABLE[adjRow]![adjCol]!
+            break
+          case 'bishop':
+            posValue = BISHOP_TABLE[adjRow]![adjCol]!
+            break
+          case 'rook':
+            posValue = ROOK_TABLE[adjRow]![adjCol]!
+            break
+          case 'queen':
+            posValue = QUEEN_TABLE[adjRow]![adjCol]!
+            break
+        }
       }
       score += sign * posValue
+    }
+  }
 
-      // 根据风格调整评估
-      if (style === 'aggressive') {
-        // 进攻风格：鼓励将军威胁和攻击
+  // Style adjustments
+  if (searchStyle === 'aggressive') {
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const piece = b[row]![col]
+        if (!piece || piece.color !== perspective) continue
         if (piece.type === 'knight' || piece.type === 'bishop') {
-          // 中心化和活跃度额外奖励
           const centerDist = Math.abs(3.5 - row) + Math.abs(3.5 - col)
-          if (centerDist <= 2 && piece.color === perspective) {
-            score += sign * 15
+          if (centerDist <= 2) {
+            score += 15
           }
         }
-        // 鼓励向前推进
-        if (piece.type === 'pawn' && piece.color === perspective) {
+        if (piece.type === 'pawn') {
           const advance = piece.color === 'white' ? (6 - row) : (row - 1)
           score += advance * 3
         }
-
-        // 对敌方王的威胁
-        if (piece.color === perspective) {
-          const enemyKingRow = findKingRow(board, piece.color === 'white' ? 'black' : 'white')
-          const distToKing = Math.abs(row - enemyKingRow) + Math.abs(col - findKingCol(board, piece.color === 'white' ? 'black' : 'white'))
-          if (distToKing <= 3) {
-            score += 20 // 靠近敌方王
+      }
+    }
+  } else if (searchStyle === 'defensive') {
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const piece = b[row]![col]
+        if (!piece || piece.color !== perspective) continue
+        // Bonus for pieces near own king
+        if (piece.type === 'pawn') {
+          const leftSame = b[row]![col - 1]
+          const rightSame = b[row]![col + 1]
+          if (
+            (leftSame && leftSame.type === 'pawn' && leftSame.color === piece.color) ||
+            (rightSame && rightSame.type === 'pawn' && rightSame.color === piece.color)
+          ) {
+            score += 10
           }
         }
-      } else if (style === 'defensive') {
-        // 防守风格：更重视己方王的安全和兵结构
-        if (piece.color === perspective) {
-          // 加强保护己方王周围的棋子
-          const ownKingRow = findKingRow(board, perspective)
-          const ownKingCol = findKingCol(board, perspective)
-          const distToOwnKing = Math.abs(row - ownKingRow) + Math.abs(col - ownKingCol)
-          if (distToOwnKing <= 2) {
-            score += 15
-          }
-          // 兵链连起来加分
-          if (piece.type === 'pawn') {
-            const leftSame = board[row]?.[col - 1]
-            const rightSame = board[row]?.[col + 1]
-            if (
-              (leftSame && leftSame.type === 'pawn' && leftSame.color === piece.color) ||
-              (rightSame && rightSame.type === 'pawn' && rightSame.color === piece.color)
-            ) {
-              score += 10
-            }
-          }
-        }
-      } else if (style === 'unpredictable') {
-        // 不可预测风格：稍微打乱评估
-        // 添加小的伪随机波动，使走法不完全最优
-        // 这个在搜索时通过随机因子处理更合适
       }
     }
   }
@@ -339,21 +713,300 @@ function evaluateBoard(
   return score
 }
 
-// 辅助：找到王的行
-function findKingRow(board: Board, color: Color): number {
+// ============================================================
+// Quiescence Search (captures only)
+// ============================================================
+function quiescenceSearch(
+  alpha: number,
+  beta: number,
+  enPassantTarget: { row: number; col: number } | null,
+  lastMove: { from: Square; to: Square } | null,
+): number {
+  if (checkTimeLimit()) return 0
+  
+  searchNodes++
+
+  // Stand pat
+  const standPat = evaluateBoardInternal(board, searchColor)
+  if (standPat >= beta) return beta
+  if (standPat > alpha) alpha = standPat
+
+  // Generate captures
+  const captures = generateLegalMoves(board, searchColor, enPassantTarget, true, lastMove)
+  if (captures.length === 0) return alpha
+
+  // Score captures for ordering
+  const scored: { move: AIDetailedMove; score: number }[] = captures.map((m) => {
+    const victim = board[m.toRow]![m.toCol]
+    const attacker = board[m.fromRow]![m.fromCol]
+    const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100 // en passant = pawn
+    const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
+    return {
+      move: m,
+      score: victimVal * 10 - attackerVal + (m.promotion ? 900 : 0),
+    }
+  })
+  scored.sort((a, b) => b.score - a.score)
+
+  for (const { move } of scored) {
+    // Delta pruning: skip captures that can't possibly improve alpha
+    const victim = move.special === 'enPassant'
+      ? board[move.fromRow]![move.toCol]
+      : board[move.toRow]![move.toCol]
+    const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100
+    const promotionBonus = move.promotion ? 800 : 0
+    if (standPat + victimVal + promotionBonus + 200 < alpha) continue
+
+    const { changes, newEnPassantTarget } = makeMove(board, move)
+    const score = -quiescenceSearch(-beta, -alpha, newEnPassantTarget, {
+      from: { row: move.fromRow, col: move.fromCol },
+      to: { row: move.toRow, col: move.toCol },
+    })
+    unmakeMove(board, changes)
+
+    if (score >= beta) return beta
+    if (score > alpha) alpha = score
+  }
+
+  return alpha
+}
+
+// ============================================================
+// PVS (Principal Variation Search)
+// ============================================================
+function pvs(
+  depth: number,
+  alpha: number,
+  beta: number,
+  enPassantTarget: { row: number; col: number } | null,
+  lastMove: { from: Square; to: Square } | null,
+): number {
+  if (checkTimeLimit()) return 0
+
+  searchNodes++
+
+  // Transposition table probe
+  const ttEntry = probeTT(searchHash, depth, alpha, beta)
+  if (ttEntry.hit) {
+    return ttEntry.score
+  }
+
+  // --- Terminal checks ---
+  const moves = generateLegalMoves(board, searchColor, enPassantTarget, false, lastMove)
+
+  if (moves.length === 0) {
+    if (isKingInCheck(board, searchColor)) {
+      // Checkmate - prefer quicker mates
+      return -MATE_SCORE + (MAX_DEPTH - depth)
+    }
+    // Stalemate
+    return 0
+  }
+
+  // Enter quiescence search at depth 0
+  if (depth <= 0) {
+    return quiescenceSearch(alpha, beta, enPassantTarget, lastMove)
+  }
+
+  // --- Null Move Pruning ---
+  const canNullMove = depth >= 3 && !isKingInCheck(board, searchColor)
+  if (canNullMove) {
+    const R = 3 + Math.floor(depth / 4)
+    // Swap side to move (skip turn)
+    const nullEpTarget: { row: number; col: number } | null = null
+    const score = -pvs(depth - 1 - R, -beta, -beta + 1, nullEpTarget, null)
+    if (score >= beta) {
+      return beta
+    }
+  }
+
+  // --- Score and order moves ---
+  const ttBestMove = ttEntry.bestMove
+  const scoredMoves: { move: AIDetailedMove; score: number }[] = moves.map((m) => ({
+    move: m,
+    score: scoreMoveForOrdering(m, ttBestMove, board, depth),
+  }))
+  scoredMoves.sort((a, b) => b.score - a.score)
+
+  // --- Search moves ---
+  let bestScore = -INF
+  let bestMove: AIDetailedMove | null = null
+  let flag = TT_ALPHA
+  let movesSearched = 0
+
+  for (const { move } of scoredMoves) {
+    movesSearched++
+
+    // Late Move Reduction
+    let reduction = 0
+    if (
+      movesSearched >= 4 &&
+      depth >= 3 &&
+      !board[move.toRow]![move.toCol] && // not a capture
+      move.special !== 'enPassant' &&
+      !move.promotion
+    ) {
+      reduction = 1 + Math.floor(movesSearched / 8)
+      if (reduction > depth - 1) reduction = depth - 1
+    }
+
+    const { changes, newEnPassantTarget } = makeMove(board, move)
+    const newLastMove: { from: Square; to: Square } = {
+      from: { row: move.fromRow, col: move.fromCol },
+      to: { row: move.toRow, col: move.toCol },
+    }
+
+    let score: number
+
+    // First move: full window
+    if (movesSearched === 1) {
+      score = -pvs(depth - 1 - reduction, -beta, -alpha, newEnPassantTarget, newLastMove)
+    } else {
+      // Zero-window search
+      score = -pvs(depth - 1 - reduction, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
+      // If the zero-window search indicates this might be better, re-search with full window
+      if (score > alpha && score < beta && reduction > 0) {
+        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+      } else if (score > alpha && score < beta) {
+        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+      }
+    }
+
+    unmakeMove(board, changes)
+
+    if (score > bestScore) {
+      bestScore = score
+      bestMove = move
+    }
+
+    if (score > alpha) {
+      alpha = score
+      flag = TT_EXACT
+    }
+
+    if (score >= beta) {
+      flag = TT_BETA
+      bestMove = move
+      // Record killer & history for beta cutoffs
+      recordKillerMove(move, depth)
+      recordHistory(move, searchColor, depth * depth)
+      break
+    }
+  }
+
+  // Store in TT
+  storeTT(searchHash, depth, bestScore, flag, bestMove)
+
+  return bestScore
+}
+
+// ============================================================
+// Iterative Deepening
+// ============================================================
+function iterativeDeepening(
+  initialEpTarget: { row: number; col: number } | null,
+  lastMove: { from: Square; to: Square } | null,
+  maxDepth: number,
+): { bestMove: AIDetailedMove; score: number } | null {
+  const moves = generateLegalMoves(board, searchColor, initialEpTarget, false, lastMove)
+  if (moves.length === 0) return null
+
+  let bestMove: AIDetailedMove = moves[0]!
+  let bestScore = -INF
+
+  // Score root moves for initial ordering
+  const rootMoves = moves.map((m) => ({
+    move: m,
+    score: scoreMoveForOrdering(m, null, board, 0),
+  }))
+  rootMoves.sort((a, b) => b.score - a.score)
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    let localBestMove: AIDetailedMove = rootMoves[0]!.move
+    let localBestScore = -INF
+    let alpha = -INF
+    const beta = INF
+
+    let firstMove = true
+
+    for (const { move } of rootMoves) {
+      if (checkTimeLimit()) {
+        // Time's up - return best from previous iteration
+        return { bestMove, score: bestScore }
+      }
+
+      const { changes, newEnPassantTarget } = makeMove(board, move)
+      const newLastMove: { from: Square; to: Square } = {
+        from: { row: move.fromRow, col: move.fromCol },
+        to: { row: move.toRow, col: move.toCol },
+      }
+
+      let score: number
+      if (firstMove) {
+        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+        firstMove = false
+      } else {
+        // Aspiration: search with narrow window first
+        score = -pvs(depth - 1, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
+        if (score > alpha && score < beta) {
+          score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+        }
+      }
+
+      unmakeMove(board, changes)
+
+      if (score > localBestScore) {
+        localBestScore = score
+        localBestMove = move
+      }
+      if (score > alpha) {
+        alpha = score
+      }
+    }
+
+    // Full depth completed without timeout
+    if (!searchStopped) {
+      bestMove = localBestMove
+      bestScore = localBestScore
+
+      // Re-sort root moves for next iteration (TT-guided)
+      rootMoves.sort((a, b) => {
+        return (
+          scoreMoveForOrdering(b.move, bestMove, board, depth + 1) -
+          scoreMoveForOrdering(a.move, bestMove, board, depth + 1)
+        )
+      })
+
+      // Early exit if checkmate is found
+      if (bestScore > MATE_SCORE - 100 || bestScore < -MATE_SCORE + 100) {
+        return { bestMove, score: bestScore }
+      }
+    } else {
+      // Timed out - return best from completed iteration
+      return { bestMove, score: bestScore }
+    }
+  }
+
+  return { bestMove, score: bestScore }
+}
+
+// ============================================================
+// Find king row/col (utility)
+// ============================================================
+function findKingRow(b: Board, color: Color): number {
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+      const piece = b[row]![col]
       if (piece && piece.type === 'king' && piece.color === color) return row
     }
   }
   return 0
 }
 
-function findKingCol(board: Board, color: Color): number {
+function findKingCol(b: Board, color: Color): number {
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+      const piece = b[row]![col]
       if (piece && piece.type === 'king' && piece.color === color) return col
     }
   }
@@ -361,260 +1014,148 @@ function findKingCol(board: Board, color: Color): number {
 }
 
 // ============================================================
-// 走法排序（用于 Alpha-Beta 剪枝优化）
-// 优先评估吃子、将军等 "激烈" 的走法
-// ============================================================
-function orderMoves(board: Board, moves: AIDetailedMove[]): AIDetailedMove[] {
-  return [...moves].sort((a, b) => {
-    const targetA = board[a.toRow]?.[a.toCol]
-    const targetB = board[b.toRow]?.[b.toCol]
-    const pieceA = board[a.fromRow]?.[a.fromCol]
-    const pieceB = board[b.fromRow]?.[b.fromCol]
-
-    // MVV-LVA: 用低价值子吃高价值子优先
-    const victimValueA = targetA ? PIECE_VALUES[targetA.type] ?? 0 : 0
-    const attackerValueA = pieceA ? PIECE_VALUES[pieceA.type] ?? 0 : 0
-    const victimValueB = targetB ? PIECE_VALUES[targetB.type] ?? 0 : 0
-    const attackerValueB = pieceB ? PIECE_VALUES[pieceB.type] ?? 0 : 0
-
-    const scoreA = victimValueA - attackerValueA / 10
-    const scoreB = victimValueB - attackerValueB / 10
-
-    // 升变是很好的走法
-    const promotionBonusA = pieceA?.type === 'pawn' && (a.toRow === 0 || a.toRow === 7) ? 800 : 0
-    const promotionBonusB = pieceB?.type === 'pawn' && (b.toRow === 0 || b.toRow === 7) ? 800 : 0
-
-    return (scoreB + promotionBonusB) - (scoreA + promotionBonusA)
-  })
-}
-
-// ============================================================
-// Minimax + Alpha-Beta 剪枝搜索
-// ============================================================
-function alphaBeta(
-  board: Board,
-  depth: number,
-  alpha: number,
-  beta: number,
-  maximizing: boolean,
-  color: Color,
-  style: AIStyle,
-  lastMove: { from: Square; to: Square } | null,
-): number {
-  // 终止条件
-  if (depth === 0) {
-    return evaluateBoard(board, color, style)
-  }
-
-  const currentColor = maximizing ? color : (color === 'white' ? 'black' : 'white')
-  const moves = getAllLegalMovesWithSources(board, currentColor, lastMove)
-
-  // 无合法走法
-  if (moves.length === 0) {
-    if (isKingInCheck(board, currentColor)) {
-      // 被将死
-      return maximizing ? -99999 + (3 - depth) : 99999 - (3 - depth)
-    }
-    // 无子可动（逼和）
-    return 0
-  }
-
-  const orderedMoves = orderMoves(board, moves)
-
-  if (maximizing) {
-    let maxEval = -Infinity
-
-    for (const move of orderedMoves) {
-      const newBoard = simulateMove(board, move)
-      const newLastMove: { from: Square; to: Square } = {
-        from: { row: move.fromRow, col: move.fromCol },
-        to: { row: move.toRow, col: move.toCol },
-      }
-
-      const evalScore = alphaBeta(
-        newBoard,
-        depth - 1,
-        alpha,
-        beta,
-        false,
-        color,
-        style,
-        newLastMove,
-      )
-
-      if (evalScore > maxEval) {
-        maxEval = evalScore
-      }
-      if (evalScore > alpha) {
-        alpha = evalScore
-      }
-      if (beta <= alpha) {
-        break // Beta 剪枝
-      }
-    }
-
-    return maxEval
-  } else {
-    let minEval = Infinity
-
-    for (const move of orderedMoves) {
-      const newBoard = simulateMove(board, move)
-      const newLastMove: { from: Square; to: Square } = {
-        from: { row: move.fromRow, col: move.fromCol },
-        to: { row: move.toRow, col: move.toCol },
-      }
-
-      const evalScore = alphaBeta(
-        newBoard,
-        depth - 1,
-        alpha,
-        beta,
-        true,
-        color,
-        style,
-        newLastMove,
-      )
-
-      if (evalScore < minEval) {
-        minEval = evalScore
-      }
-      if (evalScore < beta) {
-        beta = evalScore
-      }
-      if (beta <= alpha) {
-        break // Alpha 剪枝
-      }
-    }
-
-    return minEval
-  }
-}
-
-// ============================================================
-// 获取 AI 最佳走法（公开 API）
+// Public API: getBestAIMove
 // ============================================================
 export function getBestAIMove(
-  board: Board,
+  b: Board,
   color: Color,
   difficulty: AIDifficulty,
   style: AIStyle,
   lastMove: { from: Square; to: Square } | null,
 ): AIDetailedMove | null {
-  const moves = getAllLegalMovesWithSources(board, color, lastMove)
-  if (moves.length === 0) return null
+  // Reset global search state
+  searchColor = color
+  searchStyle = style
+  searchStartTime = performance.now()
+  searchStopped = false
+  searchNodes = 0
+  ttHits = 0
 
-  // 只有一种走法时直接返回
-  if (moves.length === 1) return moves[0]!
+  // Clear killer moves and history for new search
+  for (let d = 0; d < MAX_DEPTH; d++) {
+    killerMoves[d]![0] = null
+    killerMoves[d]![1] = null
+  }
+  // NOTE: historyTable is kept between searches (useful for move ordering across moves)
+  // NOTE: TT is kept between searches (useful for hash hits across moves)
+  // They help with move ordering and transpositions across the game.
 
-  // 根据难度确定搜索深度
+  // Time allocation per difficulty (ms)
+  const timeLimitMap: Record<AIDifficulty, number> = {
+    1: 100,  // Basic: quick
+    2: 500,  // Easy
+    3: 1500, // Medium
+    4: 4000, // Hard
+    5: 8000, // Expert
+  }
+  searchTimeLimit = timeLimitMap[difficulty]
+
+  // Depth per difficulty
   const depthMap: Record<AIDifficulty, number> = {
     1: 1,
-    2: 2,
-    3: 3,
-    4: 4,
-    5: 5,
+    2: 3,
+    3: 5,
+    4: 7,
+    5: 12,
   }
-  const depth = depthMap[difficulty]
+  const maxDepth = depthMap[difficulty]
 
-  const orderedMoves = orderMoves(board, moves)
+  // Set up board reference and compute initial hash
+  board = b
 
-  let bestMoves: AIDetailedMove[] = []
-  let bestScore = -Infinity
+  const epTarget = getEnPassantTarget(lastMove)
+  const epFile = epTarget ? epTarget.col : null
+  searchHash = computeHash(board, color, epFile)
 
-  for (const move of orderedMoves) {
-    const newBoard = simulateMove(board, move)
-    const newLastMove: { from: Square; to: Square } = {
-      from: { row: move.fromRow, col: move.fromCol },
-      to: { row: move.toRow, col: move.toCol },
+  // Only one legal move? Return it immediately
+  const moves = generateLegalMoves(board, color, epTarget, false, lastMove)
+  if (moves.length === 0) return null
+  if (moves.length === 1) return moves[0]!
+
+  // Run iterative deepening
+  const result = iterativeDeepening(epTarget, lastMove, maxDepth)
+
+  if (!result) return moves[0]!
+
+  // For unpredictable style or low difficulty, add controlled randomness
+  if (style === 'unpredictable' || difficulty <= 2) {
+    // Collect top moves within a small margin
+    const topMoves: AIDetailedMove[] = [result.bestMove]
+    const margin = difficulty <= 1 ? 200 : 50
+
+    for (const move of moves) {
+      if (move === result.bestMove) continue
+      // Quick re-evaluation at depth 1
+      const { changes, newEnPassantTarget } = makeMove(board, move)
+      const score = -evaluateBoardInternal(board, color)
+      unmakeMove(board, changes)
+      // Just use a simple random selection from the top few
+      const r = Math.random()
+      if (r < 0.3 / moves.length) {
+        topMoves.push(move)
+      }
     }
 
-    // AI 走完后，轮到对手（最小化方）
-    const score = alphaBeta(
-      newBoard,
-      depth - 1,
-      -Infinity,
-      Infinity,
-      false,
-      color,
-      style,
-      newLastMove,
-    )
-
-    // 不可预测风格：添加小的随机波动
-    let adjustedScore = score
-    if (style === 'unpredictable') {
-      adjustedScore += (Math.random() - 0.5) * 50
+    if (topMoves.length > 1 && difficulty <= 1) {
+      // Low difficulty: pick randomly from all legal moves sometimes
+      if (Math.random() < 0.3) {
+        return moves[Math.floor(Math.random() * moves.length)]!
+      }
     }
 
-    if (adjustedScore > bestScore) {
-      bestScore = adjustedScore
-      bestMoves = [move]
-    } else if (Math.abs(adjustedScore - bestScore) < 1) {
-      // 几乎相等的走法，加入候选
-      bestMoves.push(move)
-    }
+    const randomIndex = Math.floor(Math.random() * topMoves.length)
+    return topMoves[randomIndex]!
   }
 
-  // 从最佳走法中随机选择（增加不可预测性，特别是低难度）
-  if (difficulty <= 2 || style === 'unpredictable') {
-    const randomIndex = Math.floor(Math.random() * bestMoves.length)
-    return bestMoves[randomIndex]!
-  }
-
-  // 高难度：如果有多条等价最优走法，也随机选一条
-  return bestMoves[Math.floor(Math.random() * bestMoves.length)]!
+  return result.bestMove
 }
 
 // ============================================================
-// 判断兵升变时应选择的棋子类型
-// AI 总是选择后，除非特别情况下选马
+// Public API: getPromotionChoice
 // ============================================================
 export function getPromotionChoice(
-  board: Board,
+  b: Board,
   toRow: number,
   toCol: number,
   color: Color,
 ): 'queen' | 'knight' | 'rook' | 'bishop' {
-  // 默认升变为后
-  // 检查升变为马是否能将军（有时升变为马是更好的选择）
-  const enemyKingRow = findKingRow(board, color === 'white' ? 'black' : 'white')
-  const enemyKingCol = findKingCol(board, color === 'white' ? 'black' : 'white')
+  const enemyColor: Color = color === 'white' ? 'black' : 'white'
+  const enemyKingRow = findKingRow(b, enemyColor)
+  const enemyKingCol = findKingCol(b, enemyColor)
 
-  const knightOffsets = [
+  // Check if promoting to knight gives a check
+  const knightOffsets: [number, number][] = [
     [2, 1], [2, -1], [-2, 1], [-2, -1],
     [1, 2], [1, -2], [-1, 2], [-1, -2],
   ]
-
-  for (const offset of knightOffsets) {
-    const dRow = offset[0]!
-    const dCol = offset[1]!
+  for (const [dRow, dCol] of knightOffsets) {
     if (toRow + dRow === enemyKingRow && toCol + dCol === enemyKingCol) {
-      return 'knight' // 升变为马可以将军
+      return 'knight'
     }
   }
-
   return 'queen'
 }
 
 // ============================================================
-// 获取棋盘上可走的法总数（用于AI思考时间模拟等）
+// Public API: getTotalLegalMoveCount
 // ============================================================
 export function getTotalLegalMoveCount(
-  board: Board,
+  b: Board,
   color: Color,
   lastMove: { from: Square; to: Square } | null,
 ): number {
-  return getAllLegalMovesWithSources(board, color, lastMove).length
+  const epTarget = getEnPassantTarget(lastMove)
+  return generateLegalMoves(b, color, epTarget, false, lastMove).length
 }
 
 // ============================================================
-// 快速评估棋局（用于简单的棋子价值评估，不考虑位置）
+// Public API: getMaterialAdvantage
 // ============================================================
-export function getMaterialAdvantage(board: Board, color: Color): number {
+export function getMaterialAdvantage(b: Board, color: Color): number {
   let score = 0
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]?.[col]
+      const piece = b[row]![col]
       if (!piece) continue
       const value = PIECE_VALUES[piece.type] ?? 0
       score += piece.color === color ? value : -value
