@@ -42,7 +42,7 @@ export function useBoardDisplay() {
         (lastMove.from.row === row && lastMove.from.col === col) ||
         (lastMove.to.row === row && lastMove.to.col === col)
       ) {
-        return './texture/board/board_hover.png'
+        return './texture/board/board_move_hover.png'
       }
     }
 
@@ -53,14 +53,16 @@ export function useBoardDisplay() {
 
     // Premove 高亮 - 起始格
     if (premove && premove.from.row === row && premove.from.col === col) {
-      return './texture/board/board_premove_hover.png'
+      return canPremove
+        ? './texture/board/board_premove_hover.png'
+        : './texture/board/board_move_hover.png'
     }
 
     // 当前选中格高亮（premove 模式下使用 premove 版纹理）
     if (selectedSquare?.row === row && selectedSquare?.col === col) {
       return canPremove
         ? './texture/board/board_premove_hover.png'
-        : './texture/board/board_hover.png'
+        : './texture/board/board_move_hover.png'
     }
 
     const move = possibleMoves.find(
@@ -68,19 +70,21 @@ export function useBoardDisplay() {
     )
 
     if (move) {
-      if (isDragging && hoverSquare?.row === row && hoverSquare?.col === col) {
-        return './texture/board/board_hover.png'
+      if (hoverSquare?.row === row && hoverSquare?.col === col) {
+        return canPremove
+          ? './texture/board/board_premove_hover.png'
+          : './texture/board/board_move_hover.png'
       }
 
       const targetPiece = board[row]?.[col] ?? null
       if (targetPiece !== null) {
         return canPremove
           ? './texture/board/board_premove_capture.png'
-          : './texture/board/board_capture.png'
+          : './texture/board/board_move_capture.png'
       }
       return canPremove
         ? './texture/board/board_premove_placeable.png'
-        : './texture/board/board_placeable.png'
+        : './texture/board/board_move_placeable.png'
     }
 
     return null

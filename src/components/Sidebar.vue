@@ -133,7 +133,10 @@ const confirmMessage = ref('')
 const pendingAction = ref<'draw' | 'resign' | null>(null)
 
 const isUndoDisabled = computed(() => {
-  return props.moveHistory.length === 0 || props.isGameOver || !!props.gameStatus
+  if (props.moveHistory.length === 0 || props.isGameOver || !!props.gameStatus) return true
+  // 黑方执棋 + AI 模式：只剩 AI 第一步时禁止撤销，避免死锁
+  if (props.gameMode === 'ai' && props.playerColor === 'black' && props.moveHistory.length <= 1) return true
+  return false
 })
 
 const isGameActionDisabled = computed(() => {

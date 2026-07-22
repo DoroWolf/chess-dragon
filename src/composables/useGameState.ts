@@ -429,9 +429,15 @@ export function useGameState(
   // ============================================================
   const possibleMoves = computed<Move[]>(() => {
     if (!selectedSquare.value) return []
-    // 允许正常交互模式 或 premove 模式下计算合法走法
     if (!canInteract.value && !canPremove.value) return []
+    
     const { row, col } = selectedSquare.value
+    const piece = board.value[row]?.[col]
+    if (!piece) return []
+
+    // 在 premove 模式下，必须确保选中的是玩家自己的棋子
+    if (canPremove.value && piece.color !== playerColor.value) return []
+
     const enPassantTarget = getEnPassantTarget(lastMove.value)
     return getLegalMoves(board.value, row, col, { lastMove: lastMove.value, enPassantTarget })
   })
@@ -580,7 +586,7 @@ export function useGameState(
     executeMove(nextBoard, matchingMove, { row: from.row, col: from.col }, isPawnMove, isCapture)
   }
 
-  const handleSquareClick = (row: number, col: number): void => {
+  const handleSquareClick = (row: number, col: number): void => { 
     // ---- Premove 模式：在 AI 回合时预设走法 ----
     if (canPremove.value) {
       const targetPiece = board.value[row]?.[col] ?? null
@@ -743,17 +749,14 @@ export function useGameState(
   const handleMouseDown = (row: number, col: number, event: MouseEvent) => {
     if (event.button !== 0) return
 
-    // premove 模式下允许点击交互（但不支持拖拽）
-    if (canPremove.value) {
-      handleSquareClick(row, col)
-      return
-    }
-
-    if (!canInteract.value) return
+    // 既不能正常交互，也不能 premove 时直接返回
+    if (!canInteract.value && !canPremove.value) return
 
     const piece = board.value[row]?.[col]
 
-    if (piece && piece.color === currentTurn.value && !isAITurn.value) {
+    const isPlayerPiece = piece && piece.color === (canPremove.value ? playerColor.value : currentTurn.value)
+
+    if (isPlayerPiece) {
       wasAlreadySelected = selectedSquare.value?.row === row && selectedSquare.value?.col === col
       if (!wasAlreadySelected) {
         selectedSquare.value = { row, col }
@@ -768,6 +771,7 @@ export function useGameState(
       window.addEventListener('mousemove', handleMouseMove)
       window.addEventListener('mouseup', handleMouseUp)
     } else {
+      // 点击空格或对方棋子
       handleSquareClick(row, col)
     }
   }
@@ -827,19 +831,41 @@ export function useGameState(
 
     if (!from) return
 
+    // ---- 1. 单击（没有发生拖拽） ----
     if (!hadDragged) {
       if (wasAlreadySelected) {
+        // 再次点击已选中的棋子则取消选择并清除 premove
         selectedSquare.value = null
+        premove.value = null
       }
       return
     }
 
+    // ---- 2. 拖拽释放 ----
     if (to) {
+      // 拖回原位
       if (from.row === to.row && from.col === to.col) {
         if (wasAlreadySelected) selectedSquare.value = null
         return
       }
 
+      // A. 处于 Premove 模式下的拖拽释放
+      if (canPremove.value) {
+        if (canPremoveTo(to.row, to.col)) {
+          // 拖拽到合法格：成功设置 premove！
+          premove.value = {
+            from: { row: from.row, col: from.col },
+            to: { row: to.row, col: to.col },
+          }
+        } else {
+          // 拖拽到非法格：清除 premove
+          premove.value = null
+        }
+        selectedSquare.value = null // 释放拖拽后清除选中高亮
+        return
+      }
+
+      // B. 处于正常玩家回合下的拖拽释放
       if (canMoveTo(to.row, to.col)) {
         handleSquareClick(to.row, to.col)
       } else {
@@ -851,7 +877,9 @@ export function useGameState(
         }
       }
     } else {
+      // 拖到棋盘外，清空选择
       selectedSquare.value = null
+      premove.value = null
     }
   }
 
@@ -873,8 +901,10 @@ export function useGameState(
       if (boardHistory.value.length > 0) {
         const lastTurnBefore = boardHistory.value[boardHistory.value.length - 1]!.currentTurn
         const aiColor = playerColor.value === 'white' ? 'black' : 'white'
-        // 如果当前轮次是玩家，说明最后一步是 AI 走的，先撤一步
-        if (currentTurn.value === playerColor.value && lastTurnBefore === aiColor) {
+        // boardHistory 记录了走棋前的状态，若上一条记录的 turn 是 AI，则最后一步是 AI 走的
+        if (lastTurnBefore === aiColor) {
+          // 玩家执黑时，不能撤回 AI 的第一步走棋，否则会导致死锁
+          if (playerColor.value === 'black' && boardHistory.value.length <= 1) return
           restoreHistoryState(boardHistory.value.pop()!)
           moveHistory.value.pop()
           if (positionHistory.value.length > 1) {
@@ -885,6 +915,14 @@ export function useGameState(
 
       // 再撤回一步（玩家的上一步）
       if (boardHistory.value.length > 0) {
+        // 玩家执黑时不能撤回 AI 的第一步
+        if (playerColor.value === 'black' && boardHistory.value.length <= 1) {
+          const lastTurnBefore = boardHistory.value[boardHistory.value.length - 1]!.currentTurn
+          if (lastTurnBefore === 'white') {
+            selectedSquare.value = null
+            return
+          }
+        }
         restoreHistoryState(boardHistory.value.pop()!)
         moveHistory.value.pop()
         if (positionHistory.value.length > 1) {
@@ -1116,7 +1154,7 @@ export function useGameState(
 
     // 模拟 AI 思考延迟（让棋钟有时间走动）
     // 基础延迟 500ms + 根据难度随机追加 0~difficulty*500ms
-    const baseDelay = 500
+    const baseDelay = 1000
     const randomExtra = Math.random() * (6 - aiDifficulty.value) * 500
     const thinkDelay = baseDelay + randomExtra
 
