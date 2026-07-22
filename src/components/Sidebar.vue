@@ -3,8 +3,18 @@
     <ChessClock :is-clock-enabled="isClockEnabled" :white-time-seconds="whiteTimeSeconds"
       :black-time-seconds="blackTimeSeconds" :active-color="activeColor" :test-id="clockTestId" />
 
+    <div class="material-row">
+      <div class=" material-diff">
+        <span v-if="materialDiffText" class="material-diff-text">{{ materialDiffText }}</span>
+        <span v-else class="material-diff-text"></span>
+      </div>
+      <button type="button" class="btn flip-sidebar-btn" title="翻转棋盘" @click="$emit('toggle-flip')">
+        🔄
+      </button>
+    </div>
+
     <div 
-      class="card no-select game-status"
+      class="card  game-status"
       :class="{ 'turn-black': currentTurn === 'black', 'turn-white': currentTurn === 'white' }"
     >
       <div v-if="gameStatus" class="status-message">{{ gameStatus }}</div>
@@ -38,11 +48,6 @@
       <button type="button" class="btn btn-danger" :disabled="isGameActionDisabled" @click="handleResignClick">
         认输
       </button>
-    </div>
-
-    <div class="no-select material-diff">
-      <span v-if="materialDiffText">{{ materialDiffText }}</span>
-      <span v-else></span>
     </div>
 
     <!-- 二次确认弹窗 Modal -->
@@ -409,13 +414,27 @@ const materialDiffText = computed(() => {
   font-size: 0.9rem;
 }
 
+.material-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
 .material-diff {
   font-size: 1rem;
-  min-height: 1.5rem; 
+  min-height: 1.5rem;
   line-height: 1.5rem;
   display: flex;
   align-items: center;
   margin-left: 2px;
+  flex: 1;
+}
+
+.flip-sidebar-btn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.9rem;
+  flex-shrink: 0;
 }
 
 .button-group {

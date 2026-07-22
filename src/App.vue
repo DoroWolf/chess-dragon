@@ -2,7 +2,7 @@
   <section class="game-container" :class="{ 'global-dragging': isMouseDown && dragStartSquare }"
     :style="{ '--piece-scale': pieceScale }">
 
-    <GameSetup v-if="showSetup" @start="handleGameSetupStart" />
+    <GameSetup v-if="showSetup" @start="handleGameSetupStart" @remote="handleRemoteGame" />
 
     <!-- 棋盘主面板 -->
     <BoardPanel :board="board" :current-turn="currentTurn" :selected-square="selectedSquare"
@@ -40,7 +40,6 @@
     <!-- 设置弹窗 Modal -->
     <SettingsModal :visible="showSettingsModal" :is-sound-enabled="isSoundEnabled"
       :coordinate-label-mode="coordinateLabelMode" @close="showSettingsModal = false"
-      @toggle-flip="isFlipped = !isFlipped"
       @update:is-sound-enabled="(val: boolean) => isSoundEnabled = val"
       @update:coordinate-label-mode="(val: 'off' | 'inside' | 'outside') => coordinateLabelMode = val" />
   </section>
@@ -116,6 +115,12 @@ const {
   getPositionCount,
   stopClock,
 } = game
+
+// ---- 远程对战 ----
+const handleRemoteGame = () => {
+  // TODO: 后续实现远程对战功能
+  showSetup.value = true
+}
 
 // ---- 生命周期 ----
 onUnmounted(() => {

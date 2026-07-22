@@ -57,7 +57,7 @@
       </div>
     </div>
 
-    <img v-if="isDragging && dragStartSquare" class="floating-piece no-select" draggable="false"
+    <img v-if="isDragging && dragStartSquare" class="floating-piece " draggable="false"
       :src="getPieceImage(board[dragStartSquare.row]?.[dragStartSquare.col]!, board, isDraw, hasResigned, timeoutWinner)"
       :style="{ left: mousePos.x + 'px', top: mousePos.y + 'px' }" alt="" />
   </div>
@@ -229,8 +229,6 @@ watch(pieceScale, (val) => {
 .square-background,
 .piece {
   display: block;
-  image-rendering: crisp-edges;
-  image-rendering: pixelated;
 }
 
 .square-background.base {
@@ -270,8 +268,6 @@ watch(pieceScale, (val) => {
   pointer-events: none;
   z-index: 9999;
   transform: translate(-50%, -50%) scale(var(--piece-scale));
-  image-rendering: crisp-edges;
-  image-rendering: pixelated;
 }
 
 .coordinate-label {
@@ -282,7 +278,6 @@ watch(pieceScale, (val) => {
   font-weight: bold;
   pointer-events: none;
   z-index: 5;
-  user-select: none;
 }
 
 .coordinates-outside-layer {

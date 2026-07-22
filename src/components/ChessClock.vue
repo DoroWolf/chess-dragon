@@ -1,5 +1,5 @@
 <template>
-    <div v-if="isClockEnabled" class="clock-grid no-select" :data-testid="testId">
+    <div v-if="isClockEnabled" class="clock-grid " :data-testid="testId">
         <div class="clock-side side-white" :class="{ 'is-active': activeColor === 'white' }">
             <span class="clock-time">{{ formattedWhiteTime }}</span>
         </div>

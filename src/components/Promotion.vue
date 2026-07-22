@@ -46,14 +46,6 @@ const computedStyle = computed(() => ({
   background: #ffffff;
   z-index: 60;
   overflow: hidden;
-
-  /* 保证像素风格纹理渲染清晰 */
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  user-select: none;
 }
 
 .promote-btn {
@@ -78,8 +70,5 @@ const computedStyle = computed(() => ({
   height: 100%;
   object-fit: contain;
   box-sizing: border-box;
-
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
 }
 </style>

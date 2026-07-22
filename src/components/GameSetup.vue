@@ -1,6 +1,20 @@
 <template>
     <div class="setup-overlay">
-        <section class="setup-panel nes-container with-title">
+        <!-- 首页：上方 Logo，下方三个按钮 -->
+        <section v-if="screen === 'home'" class="home-panel">
+            <div class="logo-section">
+                <!-- 修改处：将文字标题替换为图片 Logo -->
+                <img src="/texture/logo.png" alt="Chess Dragon" class="logo-img" />
+            </div>
+            <div class="home-buttons">
+                <button class="btn btn-home" @click="startSetup('ai')">人机对战</button>
+                <button class="btn btn-home" @click="startSetup('human')">双人对战</button>
+                <button class="btn btn-home btn-home--secondary" @click="handleRemote">远程对战</button>
+            </div>
+        </section>
+
+        <!-- 对局设置面板 -->
+        <section v-else class="setup-panel with-title">
             <div class="setup-section">
                 <h3>棋盘</h3>
                 <div class="option-group">
@@ -33,6 +47,18 @@
                 </label>
             </div>
 
+            <!-- 强度设置（仅人机对战） -->
+            <div v-if="gameMode === 'ai'" class="setup-section">
+                <h3>强度</h3>
+                <div class="option-group">
+                    <label v-for="level in 5" :key="level" class="option-card difficulty-card"
+                        :class="{ active: difficulty === level }">
+                        <input v-model="difficulty" type="radio" :value="level" />
+                        <span>{{ level }}</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="setup-section">
                 <h3>执棋方</h3>
                 <div class="option-group">
@@ -53,9 +79,14 @@
 
             <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
-            <button type="button" class="nes-btn is-primary start-btn" @click="handleStart">
-                开始对局
-            </button>
+            <div class="setup-actions">
+                <button type="button" class="btn btn-secondary" @click="screen = 'home'">
+                    返回
+                </button>
+                <button type="button" class="btn btn-primary start-btn" @click="handleStart">
+                    开始对局
+                </button>
+            </div>
         </section>
     </div>
 </template>
@@ -69,11 +100,18 @@ export interface GameSetupConfig {
     timeMinutes: number
     incrementSeconds: number
     starter: 'black' | 'random' | 'white'
+    gameMode: 'ai' | 'human' | 'remote'
+    difficulty: number
 }
 
 const emit = defineEmits<{
     start: [config: GameSetupConfig]
+    remote: []
 }>()
+
+const screen = ref<'home' | 'setup'>('home')
+const gameMode = ref<'ai' | 'human' | 'remote'>('ai')
+const difficulty = ref(3)
 
 const boardMode = ref<'standard' | 'custom'>('standard')
 const fenInput = ref('')
@@ -81,6 +119,15 @@ const timeMinutes = ref(10)
 const incrementSeconds = ref(0)
 const starter = ref<'black' | 'random' | 'white'>('white')
 const errorMessage = ref('')
+
+const startSetup = (mode: 'ai' | 'human') => {
+    gameMode.value = mode
+    screen.value = 'setup'
+}
+
+const handleRemote = () => {
+    emit('remote')
+}
 
 const handleStart = () => {
     errorMessage.value = ''
@@ -105,6 +152,8 @@ const handleStart = () => {
         timeMinutes: timeMinutes.value,
         incrementSeconds: timeMinutes.value === 0 ? 0 : incrementSeconds.value,
         starter: starter.value,
+        gameMode: gameMode.value,
+        difficulty: difficulty.value,
     })
 }
 </script>
@@ -119,6 +168,62 @@ const handleStart = () => {
     align-items: center;
     padding: 20px;
     background-color: #f0f0f0;
+}
+
+.home-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 40px;
+    text-align: center;
+}
+
+.logo-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.logo-img {
+    max-width: 60vh;
+    height: auto;
+    object-fit: contain;
+}
+
+
+.home-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 260px;
+}
+
+.btn-home {
+    width: 100%;
+    padding: 14px 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    border: 2px solid #212529;
+    background: #fff;
+    color: #212529;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.btn-home:hover {
+    background: #212529;
+    color: #fff;
+}
+
+.btn-home--secondary {
+    border-color: #888;
+    color: #666;
+}
+
+.btn-home--secondary:hover {
+    background: #888;
+    color: #fff;
 }
 
 .setup-panel {
@@ -161,6 +266,21 @@ const handleStart = () => {
     cursor: pointer;
 }
 
+.difficulty-card {
+    width: 40px;
+    height: 40px;
+    justify-content: center;
+    padding: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.difficulty-card.active {
+    border-color: #212529;
+    background: #212529;
+    color: #fff;
+}
+
 .fen-input {
     width: 100%;
     box-sizing: border-box;
@@ -183,8 +303,27 @@ const handleStart = () => {
     font-size: 0.95rem;
 }
 
+.setup-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.btn-secondary {
+    flex: 0 0 auto;
+    padding: 10px 20px;
+    border: 1px solid #888;
+    background: #fff;
+    color: #555;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.btn-secondary:hover {
+    background: #f0f0f0;
+}
+
 .start-btn {
-    width: 100%;
-    margin-top: 8px;
+    flex: 1;
 }
 </style>

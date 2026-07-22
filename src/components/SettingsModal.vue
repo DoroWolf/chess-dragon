@@ -4,14 +4,6 @@
       <p class="dialog-title">游戏设置</p>
 
       <div class="settings-list">
-        <!-- 翻转棋盘（按钮形式） -->
-        <div class="setting-item">
-          <span class="setting-label">棋盘方向</span>
-          <button type="button" class="btn flip-btn" @click="$emit('toggle-flip')">
-            翻转棋盘
-          </button>
-        </div>
-
         <!-- 音效开关 -->
         <div class="setting-item">
           <span class="setting-label">音效</span>

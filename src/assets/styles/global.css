@@ -1,3 +1,26 @@
+body, html {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: -moz-crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.can-select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .card {
   border: 2px solid #212529;
   background-color: #fff;
@@ -53,9 +76,4 @@
 
 .btn:focus {
   outline: none;
-}
-
-.no-select {
-  -webkit-user-select: none;
-  user-select: none;
 }
