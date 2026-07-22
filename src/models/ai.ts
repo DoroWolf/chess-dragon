@@ -1,17 +1,8 @@
-import type {
-  Board,
-  Color,
-  Square,
-  Move,
-  Piece,
-  PieceType,
-  MoveOptions,
-} from './chess'
+import type { Board, Color, Square, Piece, MoveOptions } from './chess'
 import {
   getPieceMoves,
   isKingInCheck,
   getEnPassantTarget,
-  isWhiteSquare,
 } from './chess'
 
 // ============================================================
@@ -35,41 +26,34 @@ export interface AIDetailedMove {
 // Constants
 // ============================================================
 const PIECE_VALUES: Record<string, number> = {
-  pawn: 100,
-  knight: 320,
-  bishop: 330,
-  rook: 500,
-  queen: 900,
-  king: 20000,
+  pawn: 100, knight: 320, bishop: 330, rook: 500, queen: 900, king: 20000,
 }
 
 const PIECE_TYPE_INDEX: Record<string, number> = {
-  pawn: 0,
-  knight: 1,
-  bishop: 2,
-  rook: 3,
-  queen: 4,
-  king: 5,
+  pawn: 0, knight: 1, bishop: 2, rook: 3, queen: 4, king: 5,
 }
 
 const COLOR_INDEX: Record<string, number> = {
-  white: 0,
-  black: 1,
+  white: 0, black: 1,
+}
+
+function oppositeColor(c: Color): Color {
+  return c === 'white' ? 'black' : 'white'
 }
 
 const TT_EXACT = 0
-const TT_ALPHA = 1 // upper bound (score <= alpha, fail-low)
-const TT_BETA = 2 // lower bound (score >= beta, fail-high)
+const TT_ALPHA = 1
+const TT_BETA = 2
 
 const MAX_DEPTH = 64
-const TT_SIZE = 1 << 17 // 131072 entries
+const TT_SIZE = 1 << 17
 const TT_MASK = TT_SIZE - 1
 
-const INF = 999999
+const INF = 1_000_000
 const MATE_SCORE = 99999
 
 // ============================================================
-// Piece-Square Tables (same as original)
+// Piece-Square Tables
 // ============================================================
 const PAWN_TABLE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0, 0],
@@ -149,7 +133,7 @@ const KING_ENDGAME_TABLE: number[][] = [
 ]
 
 // ============================================================
-// Seeded PRNG for Zobrist keys
+// Zobrist Hashing
 // ============================================================
 function xorshift32(state: number): () => number {
   return () => {
@@ -159,22 +143,13 @@ function xorshift32(state: number): () => number {
     return state >>> 0
   }
 }
-
 const rng = xorshift32(0xDEADBEEF)
 
-// ============================================================
-// Zobrist Hashing Tables
-// ============================================================
-// zobristPiece[pieceTypeIdx][colorIdx][row * 8 + col]
 const zobristPiece: number[][][] = Array.from({ length: 6 }, () =>
   Array.from({ length: 2 }, () => new Array(64).fill(0)),
 )
-// zobristEnPassant[file] - only for the file where en passant is possible
 const zobristEnPassant: number[] = new Array(8).fill(0)
-// zobristBlackToMove
 let zobristBlackToMove = 0
-
-// Initialize all Zobrist keys
 ;(function initZobrist() {
   for (let pt = 0; pt < 6; pt++) {
     for (let c = 0; c < 2; c++) {
@@ -183,9 +158,7 @@ let zobristBlackToMove = 0
       }
     }
   }
-  for (let f = 0; f < 8; f++) {
-    zobristEnPassant[f] = rng()
-  }
+  for (let f = 0; f < 8; f++) zobristEnPassant[f] = rng()
   zobristBlackToMove = rng()
 })()
 
@@ -193,10 +166,10 @@ let zobristBlackToMove = 0
 // Transposition Table
 // ============================================================
 interface TTEntry {
-  hash: number // full hash for verification
+  hash: number
   depth: number
   score: number
-  flag: number // TT_EXACT | TT_ALPHA | TT_BETA
+  flag: number
   bestMove: AIDetailedMove | null
 }
 
@@ -212,46 +185,25 @@ function probeTT(hash: number, depth: number, alpha: number, beta: number): {
   const entry = tt[idx]
   if (entry && entry.hash === hash && entry.depth >= depth) {
     ttHits++
-    if (entry.flag === TT_EXACT) {
-      return { hit: true, score: entry.score, bestMove: entry.bestMove }
-    }
-    if (entry.flag === TT_ALPHA && entry.score <= alpha) {
-      return { hit: true, score: alpha, bestMove: entry.bestMove }
-    }
-    if (entry.flag === TT_BETA && entry.score >= beta) {
-      return { hit: true, score: beta, bestMove: entry.bestMove }
-    }
+    if (entry.flag === TT_EXACT) return { hit: true, score: entry.score, bestMove: entry.bestMove }
+    if (entry.flag === TT_ALPHA && entry.score <= alpha) return { hit: true, score: alpha, bestMove: entry.bestMove }
+    if (entry.flag === TT_BETA && entry.score >= beta) return { hit: true, score: beta, bestMove: entry.bestMove }
   }
   return { hit: false, score: 0, bestMove: entry?.bestMove ?? null }
 }
 
-function storeTT(
-  hash: number,
-  depth: number,
-  score: number,
-  flag: number,
-  bestMove: AIDetailedMove | null,
-): void {
+function storeTT(hash: number, depth: number, score: number, flag: number, bestMove: AIDetailedMove | null): void {
   const idx = hash & TT_MASK
   const existing = tt[idx]
-  // Always replace strategy (standard for chess)
-  // Except: don't replace an exact entry at the same depth with a lower-depth entry
-  if (existing && existing.hash === hash && existing.depth > depth && existing.flag === TT_EXACT) {
-    return
-  }
+  if (existing && existing.hash === hash && existing.depth > depth && existing.flag === TT_EXACT) return
   tt[idx] = { hash, depth, score, flag, bestMove }
 }
 
 // ============================================================
 // Killer Moves & History Table
 // ============================================================
-// killerMoves[depth][slot 0..1]
-const killerMoves: (AIDetailedMove | null)[][] = Array.from({ length: MAX_DEPTH }, () => [
-  null,
-  null,
-])
+const killerMoves: (AIDetailedMove | null)[][] = Array.from({ length: MAX_DEPTH }, () => [null, null])
 
-// historyTable[colorIdx][fromRow][fromCol][toRow][toCol]
 const historyTable: number[][][][][] = Array.from({ length: 2 }, () =>
   Array.from({ length: 8 }, () =>
     Array.from({ length: 8 }, () =>
@@ -260,33 +212,30 @@ const historyTable: number[][][][][] = Array.from({ length: 2 }, () =>
   ),
 )
 
-function recordKillerMove(move: AIDetailedMove, depth: number): void {
-  if (move.special) return // don't store special moves (castling, en passant)
-  const from = board[move.fromRow]?.[move.fromCol]
+function recordKillerMove(move: AIDetailedMove, ply: number): void {
+  if (move.special) return
   const to = board[move.toRow]?.[move.toCol]
-  if (to) return // don't store captures (they're already ordered by MVV-LVA)
+  if (to) return // don't store captures
 
-  const slot = killerMoves[depth]!
+  const slot = killerMoves[ply]!
   const killer0 = slot[0]
   if (killer0 && killer0.fromRow === move.fromRow && killer0.fromCol === move.fromCol &&
-    killer0.toRow === move.toRow && killer0.toCol === move.toCol) {
-    return // already stored
-  }
+    killer0.toRow === move.toRow && killer0.toCol === move.toCol) return
   slot[1] = killer0 ?? null
   slot[0] = move
 }
 
-function recordHistory(move: AIDetailedMove, color: Color, depthBonus: number): void {
+function recordHistory(move: AIDetailedMove, depthBonus: number): void {
   if (move.special) return
   const piece = board[move.fromRow]?.[move.fromCol]
   if (!piece) return
   const ci = COLOR_INDEX[piece.color]!
-  const histRow = historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]!
-  histRow[move.toCol]! += depthBonus
+  const histCell = historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]!
+  histCell[move.toCol]! += depthBonus
 }
 
 // ============================================================
-// Board Change Tracking (Make/Unmake)
+// Board Change Tracking (Make / Unmake) + Incremental Hash
 // ============================================================
 interface BoardChange {
   row: number
@@ -295,112 +244,128 @@ interface BoardChange {
 }
 
 function makeChange(
-  board: Board,
-  row: number,
-  col: number,
-  newPiece: Piece | null,
-  changes: BoardChange[],
+  b: Board, row: number, col: number,
+  newPiece: Piece | null, changes: BoardChange[],
 ): void {
-  changes.push({ row, col, oldPiece: board[row]![col]! })
-  board[row]![col] = newPiece
+  changes.push({ row, col, oldPiece: b[row]![col]! })
+  b[row]![col] = newPiece
+}
+
+interface MakeMoveResult {
+  changes: BoardChange[]
+  newEpTarget: { row: number; col: number } | null
+  oldHash: number
 }
 
 /**
- * Make a move on the board, returning changes to undo.
- * Also returns the new en passant target and whether a pawn was promoted.
+ * Execute a move on the global board, updating the global searchHash incrementally.
+ * Returns changes for undo and the previous hash.
  */
-function makeMove(
-  board: Board,
-  move: AIDetailedMove,
-): {
-  changes: BoardChange[]
-  newEnPassantTarget: { row: number; col: number } | null
-  wasPromotion: boolean
-} {
+function makeMove(move: AIDetailedMove, oldEpFile: number | null): MakeMoveResult {
   const changes: BoardChange[] = []
   const piece = board[move.fromRow]![move.fromCol]!
+  const fromSq = move.fromRow * 8 + move.fromCol
+  const toSq = move.toRow * 8 + move.toCol
 
-  let newEnPassantTarget: { row: number; col: number } | null = null
+  let newEpTarget: { row: number; col: number } | null = null
+  let newHash = searchHash
   let wasPromotion = false
 
+  // --- Toggle side to move ---
+  newHash ^= zobristBlackToMove
+
+  // --- XOR out old en passant file ---
+  if (oldEpFile !== null) newHash ^= zobristEnPassant[oldEpFile]!
+
   if (move.special === 'castle' && move.rookFrom && move.rookTo) {
-    // Move king
+    // King
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['king']!]![COLOR_INDEX[piece.color]!]![fromSq]!
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['king']!]![COLOR_INDEX[piece.color]!]![toSq]!
     makeChange(board, move.toRow, move.toCol, { ...piece, hasMoved: true }, changes)
     makeChange(board, move.fromRow, move.fromCol, null, changes)
-    // Move rook
+
+    // Rook
     const rook = board[move.rookFrom.row]![move.rookFrom.col]!
+    const rookFromSq = move.rookFrom.row * 8 + move.rookFrom.col
+    const rookToSq = move.rookTo.row * 8 + move.rookTo.col
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['rook']!]![COLOR_INDEX[rook.color]!]![rookFromSq]!
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['rook']!]![COLOR_INDEX[rook.color]!]![rookToSq]!
     makeChange(board, move.rookTo.row, move.rookTo.col, { ...rook, hasMoved: true }, changes)
     makeChange(board, move.rookFrom.row, move.rookFrom.col, null, changes)
   } else if (move.special === 'enPassant') {
-    // Move pawn
-    const promotedType = (move.toRow === 0 || move.toRow === 7)
-      ? move.promotion ?? 'queen'
-      : piece.type
-    makeChange(
-      board,
-      move.toRow,
-      move.toCol,
-      { type: promotedType, color: piece.color, hasMoved: true },
-      changes,
-    )
-    makeChange(board, move.fromRow, move.fromCol, null, changes)
+    const promotedType = (move.toRow === 0 || move.toRow === 7) ? move.promotion ?? 'queen' : piece.type
+    // Remove pawn from source
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['pawn']!]![COLOR_INDEX[piece.color]!]![fromSq]!
+    // Add piece at destination
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX[promotedType]!]![COLOR_INDEX[piece.color]!]![toSq]!
     // Remove captured pawn
+    const capSq = move.fromRow * 8 + move.toCol
+    const capturedPawn = board[move.fromRow]![move.toCol]!
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX['pawn']!]![COLOR_INDEX[capturedPawn.color]!]![capSq]!
+
+    makeChange(board, move.toRow, move.toCol, { type: promotedType, color: piece.color, hasMoved: true }, changes)
+    makeChange(board, move.fromRow, move.fromCol, null, changes)
     makeChange(board, move.fromRow, move.toCol, null, changes)
     wasPromotion = promotedType !== 'pawn'
   } else {
-    // Normal move (including promotion)
     const isPawn = piece.type === 'pawn'
     const isDoublePush = isPawn && Math.abs(move.toRow - move.fromRow) === 2
     const promotedType = isPawn && (move.toRow === 0 || move.toRow === 7)
       ? move.promotion ?? 'queen'
       : piece.type
+    const captured = board[move.toRow]![move.toCol]
 
-    makeChange(
-      board,
-      move.toRow,
-      move.toCol,
-      { type: promotedType, color: piece.color, hasMoved: true },
-      changes,
-    )
+    // Remove piece from source
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX[piece.type]!]![COLOR_INDEX[piece.color]!]![fromSq]!
+    // Add piece at destination
+    newHash ^= zobristPiece[PIECE_TYPE_INDEX[promotedType]!]![COLOR_INDEX[piece.color]!]![toSq]!
+    // Remove captured piece
+    if (captured) {
+      newHash ^= zobristPiece[PIECE_TYPE_INDEX[captured.type]!]![COLOR_INDEX[captured.color]!]![toSq]!
+    }
+
+    makeChange(board, move.toRow, move.toCol, { type: promotedType, color: piece.color, hasMoved: true }, changes)
     makeChange(board, move.fromRow, move.fromCol, null, changes)
 
     if (isDoublePush) {
-      newEnPassantTarget = {
-        row: (move.fromRow + move.toRow) >> 1,
-        col: move.fromCol,
-      }
+      newEpTarget = { row: (move.fromRow + move.toRow) >> 1, col: move.fromCol }
     }
     wasPromotion = promotedType !== piece.type
   }
 
-  return { changes, newEnPassantTarget, wasPromotion }
+  // --- XOR in new en passant file ---
+  const newEpFile = newEpTarget ? newEpTarget.col : null
+  if (newEpFile !== null) newHash ^= zobristEnPassant[newEpFile]!
+
+  const oldHash = searchHash
+  searchHash = newHash >>> 0
+
+  return { changes, newEpTarget, oldHash }
 }
 
 /**
- * Undo a move by restoring all changed squares.
+ * Undo a move by restoring board changes and the hash.
  */
-function unmakeMove(board: Board, changes: BoardChange[]): void {
+function unmakeMove(changes: BoardChange[], oldHash: number): void {
   for (let i = changes.length - 1; i >= 0; i--) {
     const ch = changes[i]!
     board[ch.row]![ch.col] = ch.oldPiece
   }
+  searchHash = oldHash
 }
 
 // ============================================================
 // Move Generation (legal moves for a color)
 // ============================================================
 function generateLegalMoves(
-  board: Board,
   color: Color,
-  enPassantTarget: { row: number; col: number } | null,
+  epTarget: { row: number; col: number } | null,
   capturesOnly: boolean,
   lastMove: { from: Square; to: Square } | null,
 ): AIDetailedMove[] {
   const moves: AIDetailedMove[] = []
-
-  // Compute en passant target from lastMove if not provided
-  const epTarget = enPassantTarget ?? getEnPassantTarget(lastMove)
-  const moveOpts: MoveOptions = { enPassantTarget: epTarget, lastMove }
+  const ep = epTarget ?? getEnPassantTarget(lastMove)
+  const moveOpts: MoveOptions = { enPassantTarget: ep, lastMove }
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
@@ -408,67 +373,52 @@ function generateLegalMoves(
       if (!piece || piece.color !== color) continue
 
       const candidateMoves = getPieceMoves(board, row, col, moveOpts)
-
       for (const m of candidateMoves) {
         const isCapture = board[m.row]![m.col] !== null || m.special === 'enPassant'
-
         if (capturesOnly && !isCapture) continue
 
-        const detailedMove: AIDetailedMove = {
-          fromRow: row,
-          fromCol: col,
-          toRow: m.row,
-          toCol: m.col,
+        const detailed: AIDetailedMove = {
+          fromRow: row, fromCol: col,
+          toRow: m.row, toCol: m.col,
           special: m.special,
-          rookFrom: m.rookFrom,
-          rookTo: m.rookTo,
+          rookFrom: m.rookFrom, rookTo: m.rookTo,
         }
-
-        // For promotion moves, add queen promotion
         if (piece.type === 'pawn' && (m.row === 0 || m.row === 7)) {
-          detailedMove.promotion = 'queen'
+          detailed.promotion = 'queen'
         }
 
-        // Test legality using make/unmake
-        const { changes } = makeMove(board, detailedMove)
+        // Test legality via make/unmake
+        const oldEpFile = ep ? ep.col : null
+        const { changes, oldHash } = makeMove(detailed, oldEpFile)
         const legal = !isKingInCheck(board, color)
-        unmakeMove(board, changes)
+        unmakeMove(changes, oldHash)
 
-        if (legal) {
-          moves.push(detailedMove)
-        }
+        if (legal) moves.push(detailed)
       }
     }
   }
-
   return moves
 }
 
 // ============================================================
 // Move Scoring / Ordering
 // ============================================================
-const MOVE_SCORE_TT = 10000000
-const MOVE_SCORE_CAPTURE_BASE = 1000000
-const MOVE_SCORE_KILLER_BASE = 900000
-const MOVE_SCORE_KILLER2 = 800000
+const MOVE_SCORE_TT = 10_000_000
+const MOVE_SCORE_CAPTURE_BASE = 1_000_000
+const MOVE_SCORE_KILLER_BASE = 900_000
+const MOVE_SCORE_KILLER2 = 800_000
 
 function scoreMoveForOrdering(
   move: AIDetailedMove,
   ttMove: AIDetailedMove | null,
-  board: Board,
-  depth: number,
+  ply: number,
 ): number {
-  // 1. TT best move first
-  if (
-    ttMove &&
-    ttMove.fromRow === move.fromRow &&
-    ttMove.fromCol === move.fromCol &&
-    ttMove.toRow === move.toRow &&
-    ttMove.toCol === move.toCol &&
+  // 1. TT best move
+  if (ttMove &&
+    ttMove.fromRow === move.fromRow && ttMove.fromCol === move.fromCol &&
+    ttMove.toRow === move.toRow && ttMove.toCol === move.toCol &&
     ttMove.special === move.special
-  ) {
-    return MOVE_SCORE_TT
-  }
+  ) return MOVE_SCORE_TT
 
   // 2. Captures by MVV-LVA
   const victim = move.special === 'enPassant'
@@ -482,31 +432,19 @@ function scoreMoveForOrdering(
   }
 
   // 3. Promotion
-  if (move.promotion) {
-    return MOVE_SCORE_CAPTURE_BASE + 900 // promote to queen
-  }
+  if (move.promotion) return MOVE_SCORE_CAPTURE_BASE + 900
 
   // 4. Killer moves
-  const killer0 = killerMoves[depth]![0]
-  if (
-    killer0 &&
-    killer0.fromRow === move.fromRow &&
-    killer0.fromCol === move.fromCol &&
-    killer0.toRow === move.toRow &&
-    killer0.toCol === move.toCol
-  ) {
-    return MOVE_SCORE_KILLER_BASE
-  }
-  const killer1 = killerMoves[depth]![1]
-  if (
-    killer1 &&
-    killer1.fromRow === move.fromRow &&
-    killer1.fromCol === move.fromCol &&
-    killer1.toRow === move.toRow &&
-    killer1.toCol === move.toCol
-  ) {
-    return MOVE_SCORE_KILLER2
-  }
+  const killer0 = killerMoves[ply]![0]
+  if (killer0 &&
+    killer0.fromRow === move.fromRow && killer0.fromCol === move.fromCol &&
+    killer0.toRow === move.toRow && killer0.toCol === move.toCol
+  ) return MOVE_SCORE_KILLER_BASE
+  const killer1 = killerMoves[ply]![1]
+  if (killer1 &&
+    killer1.fromRow === move.fromRow && killer1.fromCol === move.fromCol &&
+    killer1.toRow === move.toRow && killer1.toCol === move.toCol
+  ) return MOVE_SCORE_KILLER2
 
   // 5. History heuristic
   const piece = board[move.fromRow]![move.fromCol]
@@ -514,104 +452,13 @@ function scoreMoveForOrdering(
     const ci = COLOR_INDEX[piece.color]!
     return historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]![move.toCol] ?? 0
   }
-
   return 0
 }
 
 // ============================================================
-// Search state (module-level, reset per search)
+// Board Evaluation
 // ============================================================
-let board: Board = []
-let searchColor: Color = 'white'
-let searchStyle: AIStyle = 'balanced'
-let searchHash: number = 0
-let searchStartTime: number = 0
-let searchTimeLimit: number = 0
-let searchStopped: boolean = false
-let searchNodes: number = 0
-let pvLine: AIDetailedMove[] = []
-
-function checkTimeLimit(): boolean {
-  if (searchStopped) return true
-  if (performance.now() - searchStartTime >= searchTimeLimit) {
-    searchStopped = true
-    return true
-  }
-  return false
-}
-
-// ============================================================
-// Compute Zobrist hash from board state
-// ============================================================
-function computeHash(
-  b: Board,
-  currentTurn: Color,
-  enPassantFile: number | null,
-): number {
-  let h = 0
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const p = b[r]![c]
-      if (p) {
-        const ptIdx = PIECE_TYPE_INDEX[p.type]!
-        const cIdx = COLOR_INDEX[p.color]!
-        h ^= zobristPiece[ptIdx]![cIdx]![r * 8 + c]!
-      }
-    }
-  }
-  if (currentTurn === 'black') {
-    h ^= zobristBlackToMove
-  }
-  if (enPassantFile !== null && enPassantFile >= 0 && enPassantFile < 8) {
-    h ^= zobristEnPassant[enPassantFile]!
-  }
-  return h >>> 0
-}
-
-// ============================================================
-// Incremental hash update for make/unmake
-// ============================================================
-function updateHashMove(
-  hash: number,
-  piece: Piece,
-  fromSq: number,
-  toSq: number,
-  captured: Piece | null,
-  capturedSq: number,
-  oldEpFile: number | null,
-  newEpFile: number | null,
-  sideToMove: Color,
-): number {
-  let h = hash
-  const ptIdx = PIECE_TYPE_INDEX[piece.type]!
-  const cIdx = COLOR_INDEX[piece.color]!
-
-  // Remove piece from source square
-  h ^= zobristPiece[ptIdx]![cIdx]![fromSq]!
-  // Add piece to destination square
-  h ^= zobristPiece[ptIdx]![cIdx]![toSq]!
-
-  // Remove captured piece
-  if (captured) {
-    const capPtIdx = PIECE_TYPE_INDEX[captured.type]!
-    const capCIdx = COLOR_INDEX[captured.color]!
-    h ^= zobristPiece[capPtIdx]![capCIdx]![capturedSq]!
-  }
-
-  // Update en passant file
-  if (oldEpFile !== null) h ^= zobristEnPassant[oldEpFile]!
-  if (newEpFile !== null) h ^= zobristEnPassant[newEpFile]!
-
-  // Toggle side to move
-  h ^= zobristBlackToMove
-
-  return h >>> 0
-}
-
-// ============================================================
-// Fast endgame detection
-// ============================================================
-function isEndgame(board: Board): boolean {
+function isEndgame(): boolean {
   let totalMaterial = 0
   let queenCount = 0
   for (let r = 0; r < 8; r++) {
@@ -625,47 +472,32 @@ function isEndgame(board: Board): boolean {
   return queenCount <= 1 || totalMaterial <= 1400
 }
 
-// ============================================================
-// Board Evaluation
-// ============================================================
-function evaluateBoardInternal(b: Board, perspective: Color): number {
+function evaluateBoardInternal(perspective: Color): number {
   let score = 0
-  const endgame = isEndgame(b)
+  const endgame = isEndgame()
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = b[row]![col]
+      const piece = board[row]![col]
       if (!piece) continue
 
       const sign = piece.color === perspective ? 1 : -1
-      const baseValue = PIECE_VALUES[piece.type] ?? 0
-      score += sign * baseValue
+      score += sign * (PIECE_VALUES[piece.type] ?? 0)
 
       let posValue = 0
+      const adjRow = piece.color === 'white' ? row : 7 - row
+      const adjCol = piece.color === 'white' ? col : 7 - col
+
       if (piece.type === 'king') {
         const table = endgame ? KING_ENDGAME_TABLE : KING_MIDDLE_TABLE
-        const adjRow = piece.color === 'white' ? row : 7 - row
-        const adjCol = piece.color === 'white' ? col : 7 - col
         posValue = table[adjRow]![adjCol]!
       } else {
-        const adjRow = piece.color === 'white' ? row : 7 - row
-        const adjCol = piece.color === 'white' ? col : 7 - col
         switch (piece.type) {
-          case 'pawn':
-            posValue = PAWN_TABLE[adjRow]![adjCol]!
-            break
-          case 'knight':
-            posValue = KNIGHT_TABLE[adjRow]![adjCol]!
-            break
-          case 'bishop':
-            posValue = BISHOP_TABLE[adjRow]![adjCol]!
-            break
-          case 'rook':
-            posValue = ROOK_TABLE[adjRow]![adjCol]!
-            break
-          case 'queen':
-            posValue = QUEEN_TABLE[adjRow]![adjCol]!
-            break
+          case 'pawn': posValue = PAWN_TABLE[adjRow]![adjCol]!; break
+          case 'knight': posValue = KNIGHT_TABLE[adjRow]![adjCol]!; break
+          case 'bishop': posValue = BISHOP_TABLE[adjRow]![adjCol]!; break
+          case 'rook': posValue = ROOK_TABLE[adjRow]![adjCol]!; break
+          case 'queen': posValue = QUEEN_TABLE[adjRow]![adjCol]!; break
         }
       }
       score += sign * posValue
@@ -676,36 +508,28 @@ function evaluateBoardInternal(b: Board, perspective: Color): number {
   if (searchStyle === 'aggressive') {
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
-        const piece = b[row]![col]
+        const piece = board[row]![col]
         if (!piece || piece.color !== perspective) continue
         if (piece.type === 'knight' || piece.type === 'bishop') {
           const centerDist = Math.abs(3.5 - row) + Math.abs(3.5 - col)
-          if (centerDist <= 2) {
-            score += 15
-          }
+          if (centerDist <= 2) score += 15
         }
         if (piece.type === 'pawn') {
-          const advance = piece.color === 'white' ? (6 - row) : (row - 1)
-          score += advance * 3
+          score += (piece.color === 'white' ? (6 - row) : (row - 1)) * 3
         }
       }
     }
   } else if (searchStyle === 'defensive') {
     for (let row = 0; row < 8; row++) {
       for (let col = 0; col < 8; col++) {
-        const piece = b[row]![col]
-        if (!piece || piece.color !== perspective) continue
-        // Bonus for pieces near own king
-        if (piece.type === 'pawn') {
-          const leftSame = b[row]![col - 1]
-          const rightSame = b[row]![col + 1]
-          if (
-            (leftSame && leftSame.type === 'pawn' && leftSame.color === piece.color) ||
-            (rightSame && rightSame.type === 'pawn' && rightSame.color === piece.color)
-          ) {
-            score += 10
-          }
-        }
+        const piece = board[row]![col]
+        if (!piece || piece.color !== perspective || piece.type !== 'pawn') continue
+        const leftSame = board[row]![col - 1]
+        const rightSame = board[row]![col + 1]
+        if (
+          (leftSame && leftSame.type === 'pawn' && leftSame.color === piece.color) ||
+          (rightSame && rightSame.type === 'pawn' && rightSame.color === piece.color)
+        ) score += 10
       }
     }
   }
@@ -714,42 +538,78 @@ function evaluateBoardInternal(b: Board, perspective: Color): number {
 }
 
 // ============================================================
+// Search State (module-level)
+// ============================================================
+let board: Board = []
+let searchStyle: AIStyle = 'balanced'
+let searchHash: number = 0
+let searchStartTime: number = 0
+let searchTimeLimit: number = 0
+let searchStopped: boolean = false
+let searchNodes: number = 0
+
+function checkTimeLimit(): boolean {
+  if (searchStopped) return true
+  if (performance.now() - searchStartTime >= searchTimeLimit) {
+    searchStopped = true
+    return true
+  }
+  return false
+}
+
+function computeHash(b: Board, currentTurn: Color, epFile: number | null): number {
+  let h = 0
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = b[r]![c]
+      if (p) {
+        h ^= zobristPiece[PIECE_TYPE_INDEX[p.type]!]![COLOR_INDEX[p.color]!]![r * 8 + c]!
+      }
+    }
+  }
+  if (currentTurn === 'black') h ^= zobristBlackToMove
+  if (epFile !== null && epFile >= 0 && epFile < 8) h ^= zobristEnPassant[epFile]!
+  return h >>> 0
+}
+
+// ============================================================
 // Quiescence Search (captures only)
+// @param color - the side whose turn it is
+// Returns score from `color`'s perspective
 // ============================================================
 function quiescenceSearch(
+  color: Color,
   alpha: number,
   beta: number,
-  enPassantTarget: { row: number; col: number } | null,
+  epTarget: { row: number; col: number } | null,
   lastMove: { from: Square; to: Square } | null,
 ): number {
   if (checkTimeLimit()) return 0
-  
   searchNodes++
 
-  // Stand pat
-  const standPat = evaluateBoardInternal(board, searchColor)
+  const standPat = evaluateBoardInternal(color)
   if (standPat >= beta) return beta
   if (standPat > alpha) alpha = standPat
 
-  // Generate captures
-  const captures = generateLegalMoves(board, searchColor, enPassantTarget, true, lastMove)
+  const captures = generateLegalMoves(color, epTarget, true, lastMove)
   if (captures.length === 0) return alpha
 
   // Score captures for ordering
-  const scored: { move: AIDetailedMove; score: number }[] = captures.map((m) => {
-    const victim = board[m.toRow]![m.toCol]
+  const scored = captures.map((m) => {
+    const victim = m.special === 'enPassant'
+      ? board[m.fromRow]![m.toCol]
+      : board[m.toRow]![m.toCol]
+    const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100
     const attacker = board[m.fromRow]![m.fromCol]
-    const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100 // en passant = pawn
     const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
-    return {
-      move: m,
-      score: victimVal * 10 - attackerVal + (m.promotion ? 900 : 0),
-    }
+    return { move: m, score: victimVal * 10 - attackerVal + (m.promotion ? 900 : 0) }
   })
   scored.sort((a, b) => b.score - a.score)
 
+  const opponent = oppositeColor(color)
+
   for (const { move } of scored) {
-    // Delta pruning: skip captures that can't possibly improve alpha
+    // Delta pruning
     const victim = move.special === 'enPassant'
       ? board[move.fromRow]![move.toCol]
       : board[move.toRow]![move.toCol]
@@ -757,12 +617,13 @@ function quiescenceSearch(
     const promotionBonus = move.promotion ? 800 : 0
     if (standPat + victimVal + promotionBonus + 200 < alpha) continue
 
-    const { changes, newEnPassantTarget } = makeMove(board, move)
-    const score = -quiescenceSearch(-beta, -alpha, newEnPassantTarget, {
+    const oldEpFile = epTarget ? epTarget.col : null
+    const { changes, newEpTarget, oldHash } = makeMove(move, oldEpFile)
+    const score = -quiescenceSearch(opponent, -beta, -alpha, newEpTarget, {
       from: { row: move.fromRow, col: move.fromCol },
       to: { row: move.toRow, col: move.toCol },
     })
-    unmakeMove(board, changes)
+    unmakeMove(changes, oldHash)
 
     if (score >= beta) return beta
     if (score > alpha) alpha = score
@@ -772,59 +633,77 @@ function quiescenceSearch(
 }
 
 // ============================================================
-// PVS (Principal Variation Search)
+// PVS (Principal Variation Search) — Negamax with color parameter
+// @param color  — side whose turn it is
+// @param ply    — distance from root (for killer indexing)
+// Returns score from `color`'s perspective
 // ============================================================
 function pvs(
+  color: Color,
   depth: number,
   alpha: number,
   beta: number,
-  enPassantTarget: { row: number; col: number } | null,
+  ply: number,
+  epTarget: { row: number; col: number } | null,
   lastMove: { from: Square; to: Square } | null,
 ): number {
   if (checkTimeLimit()) return 0
-
   searchNodes++
 
-  // Transposition table probe
+  // --- Transposition table probe ---
   const ttEntry = probeTT(searchHash, depth, alpha, beta)
-  if (ttEntry.hit) {
-    return ttEntry.score
-  }
+  if (ttEntry.hit) return ttEntry.score
 
   // --- Terminal checks ---
-  const moves = generateLegalMoves(board, searchColor, enPassantTarget, false, lastMove)
-
+  const moves = generateLegalMoves(color, epTarget, false, lastMove)
   if (moves.length === 0) {
-    if (isKingInCheck(board, searchColor)) {
-      // Checkmate - prefer quicker mates
-      return -MATE_SCORE + (MAX_DEPTH - depth)
+    if (isKingInCheck(board, color)) {
+      return -MATE_SCORE + (MAX_DEPTH - depth) // checkmate
     }
-    // Stalemate
-    return 0
+    return 0 // stalemate
   }
 
-  // Enter quiescence search at depth 0
+  // --- Quiescence search at horizon ---
   if (depth <= 0) {
-    return quiescenceSearch(alpha, beta, enPassantTarget, lastMove)
+    return quiescenceSearch(color, alpha, beta, epTarget, lastMove)
   }
+
+  // --- Mate distance pruning ---
+  const matingScore = MATE_SCORE - (MAX_DEPTH - depth)
+  if (alpha < -matingScore) alpha = -matingScore
+  if (beta > matingScore) beta = matingScore
 
   // --- Null Move Pruning ---
-  const canNullMove = depth >= 3 && !isKingInCheck(board, searchColor)
-  if (canNullMove) {
+  const inCheck = isKingInCheck(board, color)
+  if (depth >= 3 && !inCheck) {
     const R = 3 + Math.floor(depth / 4)
-    // Swap side to move (skip turn)
-    const nullEpTarget: { row: number; col: number } | null = null
-    const score = -pvs(depth - 1 - R, -beta, -beta + 1, nullEpTarget, null)
-    if (score >= beta) {
-      return beta
-    }
+    const opponent = oppositeColor(color)
+    // Null move: pass turn. Save hash, toggle side, clear ep.
+    const savedHash = searchHash
+    searchHash ^= zobristBlackToMove
+    if (epTarget !== null) searchHash ^= zobristEnPassant[epTarget.col]!
+    searchHash >>>= 0
+
+    const score = -pvs(opponent, depth - 1 - R, -beta, -beta + 1, ply + 1, null, null)
+    searchHash = savedHash
+
+    if (score >= beta) return beta
+  }
+
+  // --- Static eval for pruning heuristics ---
+  const staticEval = evaluateBoardInternal(color)
+
+  // --- Razoring ---
+  if (depth <= 2 && !inCheck && staticEval + 600 <= alpha) {
+    const qScore = quiescenceSearch(color, alpha, beta, epTarget, lastMove)
+    if (qScore <= alpha) return qScore
   }
 
   // --- Score and order moves ---
   const ttBestMove = ttEntry.bestMove
-  const scoredMoves: { move: AIDetailedMove; score: number }[] = moves.map((m) => ({
+  const scoredMoves = moves.map((m) => ({
     move: m,
-    score: scoreMoveForOrdering(m, ttBestMove, board, depth),
+    score: scoreMoveForOrdering(m, ttBestMove, ply),
   }))
   scoredMoves.sort((a, b) => b.score - a.score)
 
@@ -833,156 +712,178 @@ function pvs(
   let bestMove: AIDetailedMove | null = null
   let flag = TT_ALPHA
   let movesSearched = 0
+  const opponent = oppositeColor(color)
 
   for (const { move } of scoredMoves) {
     movesSearched++
 
-    // Late Move Reduction
+    const isCapture = board[move.toRow]![move.toCol] !== null || move.special === 'enPassant'
+    const isPromotion = !!move.promotion
+
+    // --- Check Extension ---
+    let extension = 0
+
+    // --- Late Move Reduction ---
     let reduction = 0
-    if (
-      movesSearched >= 4 &&
-      depth >= 3 &&
-      !board[move.toRow]![move.toCol] && // not a capture
-      move.special !== 'enPassant' &&
-      !move.promotion
-    ) {
+    if (movesSearched >= 4 && depth >= 3 && !isCapture && move.special !== 'enPassant' && !isPromotion && !inCheck) {
       reduction = 1 + Math.floor(movesSearched / 8)
       if (reduction > depth - 1) reduction = depth - 1
     }
 
-    const { changes, newEnPassantTarget } = makeMove(board, move)
-    const newLastMove: { from: Square; to: Square } = {
+    // --- Futility Pruning ---
+    if (depth <= 3 && !inCheck && !isCapture && move.special !== 'enPassant' && !isPromotion) {
+      const margin = depth * 120
+      if (staticEval + margin <= alpha) {
+        if (movesSearched > 1) continue // keep at least one move
+      }
+    }
+
+    const oldEpFile = epTarget ? epTarget.col : null
+    const { changes, newEpTarget, oldHash } = makeMove(move, oldEpFile)
+
+    const newLastMove = {
       from: { row: move.fromRow, col: move.fromCol },
       to: { row: move.toRow, col: move.toCol },
     }
 
     let score: number
+    const newDepth = depth - 1 - reduction + extension
 
-    // First move: full window
     if (movesSearched === 1) {
-      score = -pvs(depth - 1 - reduction, -beta, -alpha, newEnPassantTarget, newLastMove)
+      // First move: full window
+      score = -pvs(opponent, newDepth, -beta, -alpha, ply + 1, newEpTarget, newLastMove)
     } else {
-      // Zero-window search
-      score = -pvs(depth - 1 - reduction, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
-      // If the zero-window search indicates this might be better, re-search with full window
-      if (score > alpha && score < beta && reduction > 0) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
-      } else if (score > alpha && score < beta) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+      // Zero-window search (PVS)
+      score = -pvs(opponent, newDepth, -alpha - 1, -alpha, ply + 1, newEpTarget, newLastMove)
+      // Re-search with full window if score improved
+      if (score > alpha && score < beta) {
+        score = -pvs(opponent, depth - 1 + extension, -beta, -alpha, ply + 1, newEpTarget, newLastMove)
       }
     }
 
-    unmakeMove(board, changes)
+    unmakeMove(changes, oldHash)
 
     if (score > bestScore) {
       bestScore = score
       bestMove = move
     }
-
     if (score > alpha) {
       alpha = score
       flag = TT_EXACT
     }
-
     if (score >= beta) {
       flag = TT_BETA
       bestMove = move
-      // Record killer & history for beta cutoffs
-      recordKillerMove(move, depth)
-      recordHistory(move, searchColor, depth * depth)
+      recordKillerMove(move, ply)
+      recordHistory(move, depth * depth)
       break
     }
   }
 
-  // Store in TT
   storeTT(searchHash, depth, bestScore, flag, bestMove)
-
   return bestScore
 }
 
 // ============================================================
-// Iterative Deepening
+// Iterative Deepening with Aspiration Windows
 // ============================================================
 function iterativeDeepening(
+  aiColor: Color,
   initialEpTarget: { row: number; col: number } | null,
   lastMove: { from: Square; to: Square } | null,
   maxDepth: number,
 ): { bestMove: AIDetailedMove; score: number } | null {
-  const moves = generateLegalMoves(board, searchColor, initialEpTarget, false, lastMove)
+  const moves = generateLegalMoves(aiColor, initialEpTarget, false, lastMove)
   if (moves.length === 0) return null
 
   let bestMove: AIDetailedMove = moves[0]!
   let bestScore = -INF
 
-  // Score root moves for initial ordering
-  const rootMoves = moves.map((m) => ({
-    move: m,
-    score: scoreMoveForOrdering(m, null, board, 0),
-  }))
+  // Score root moves
+  const rootMoves = moves.map((m) => ({ move: m, score: scoreMoveForOrdering(m, null, 0) }))
   rootMoves.sort((a, b) => b.score - a.score)
+
+  let prevScore = -INF
+  const opponent = oppositeColor(aiColor)
 
   for (let depth = 1; depth <= maxDepth; depth++) {
     let localBestMove: AIDetailedMove = rootMoves[0]!.move
     let localBestScore = -INF
+
+    // --- Aspiration Window ---
     let alpha = -INF
-    const beta = INF
+    let beta = INF
+    if (depth >= 3 && prevScore > -MATE_SCORE / 2) {
+      const window = 50
+      alpha = prevScore - window
+      beta = prevScore + window
+    }
 
     let firstMove = true
 
-    for (const { move } of rootMoves) {
-      if (checkTimeLimit()) {
-        // Time's up - return best from previous iteration
-        return { bestMove, score: bestScore }
-      }
+    // Aspiration window widening loop
+    while (true) {
+      if (checkTimeLimit()) return { bestMove, score: bestScore }
 
-      const { changes, newEnPassantTarget } = makeMove(board, move)
-      const newLastMove: { from: Square; to: Square } = {
-        from: { row: move.fromRow, col: move.fromCol },
-        to: { row: move.toRow, col: move.toCol },
-      }
+      for (const { move } of rootMoves) {
+        if (checkTimeLimit()) return { bestMove, score: bestScore }
 
-      let score: number
-      if (firstMove) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
-        firstMove = false
-      } else {
-        // Aspiration: search with narrow window first
-        score = -pvs(depth - 1, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
-        if (score > alpha && score < beta) {
-          score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+        const oldEpFile = initialEpTarget ? initialEpTarget.col : null
+        const { changes, newEpTarget, oldHash } = makeMove(move, oldEpFile)
+
+        const newLastMove = {
+          from: { row: move.fromRow, col: move.fromCol },
+          to: { row: move.toRow, col: move.toCol },
         }
+
+        let score: number
+        if (firstMove) {
+          score = -pvs(opponent, depth - 1, -beta, -alpha, 1, newEpTarget, newLastMove)
+          firstMove = false
+        } else {
+          score = -pvs(opponent, depth - 1, -alpha - 1, -alpha, 1, newEpTarget, newLastMove)
+          if (score > alpha && score < beta) {
+            score = -pvs(opponent, depth - 1, -beta, -alpha, 1, newEpTarget, newLastMove)
+          }
+        }
+
+        unmakeMove(changes, oldHash)
+
+        if (score > localBestScore) {
+          localBestScore = score
+          localBestMove = move
+        }
+        if (score > alpha) alpha = score
       }
 
-      unmakeMove(board, changes)
+      // If we got a score within the aspiration window, we're done with this depth
+      if (localBestScore > alpha - 1 || alpha >= INF - 1) break
 
-      if (score > localBestScore) {
-        localBestScore = score
-        localBestMove = move
-      }
-      if (score > alpha) {
-        alpha = score
-      }
+      // Widening: score fell below window — re-search with wider window
+      alpha = -INF
+      beta = localBestScore + 1 // try again with wider lower bound
+      firstMove = true
+      // safety: limit retries
+      if (alpha < -INF + 100) break
     }
 
-    // Full depth completed without timeout
+    // Depth completed
     if (!searchStopped) {
       bestMove = localBestMove
       bestScore = localBestScore
+      prevScore = bestScore
 
       // Re-sort root moves for next iteration (TT-guided)
-      rootMoves.sort((a, b) => {
-        return (
-          scoreMoveForOrdering(b.move, bestMove, board, depth + 1) -
-          scoreMoveForOrdering(a.move, bestMove, board, depth + 1)
-        )
-      })
+      rootMoves.sort((a, b) =>
+        scoreMoveForOrdering(b.move, bestMove, depth + 1) -
+        scoreMoveForOrdering(a.move, bestMove, depth + 1),
+      )
 
-      // Early exit if checkmate is found
+      // Early exit on forced mate
       if (bestScore > MATE_SCORE - 100 || bestScore < -MATE_SCORE + 100) {
         return { bestMove, score: bestScore }
       }
     } else {
-      // Timed out - return best from completed iteration
       return { bestMove, score: bestScore }
     }
   }
@@ -991,7 +892,7 @@ function iterativeDeepening(
 }
 
 // ============================================================
-// Find king row/col (utility)
+// Utilities
 // ============================================================
 function findKingRow(b: Board, color: Color): number {
   for (let row = 0; row < 8; row++) {
@@ -1014,7 +915,7 @@ function findKingCol(b: Board, color: Color): number {
 }
 
 // ============================================================
-// Public API: getBestAIMove
+// Public API
 // ============================================================
 export function getBestAIMove(
   b: Board,
@@ -1023,142 +924,94 @@ export function getBestAIMove(
   style: AIStyle,
   lastMove: { from: Square; to: Square } | null,
 ): AIDetailedMove | null {
-  // Reset global search state
-  searchColor = color
+  // Reset search state
   searchStyle = style
   searchStartTime = performance.now()
   searchStopped = false
   searchNodes = 0
   ttHits = 0
 
-  // Clear killer moves and history for new search
   for (let d = 0; d < MAX_DEPTH; d++) {
     killerMoves[d]![0] = null
     killerMoves[d]![1] = null
   }
-  // NOTE: historyTable is kept between searches (useful for move ordering across moves)
-  // NOTE: TT is kept between searches (useful for hash hits across moves)
-  // They help with move ordering and transpositions across the game.
 
-  // Time allocation per difficulty (ms)
   const timeLimitMap: Record<AIDifficulty, number> = {
-    1: 100,  // Basic: quick
-    2: 500,  // Easy
-    3: 1500, // Medium
-    4: 4000, // Hard
-    5: 8000, // Expert
+    1: 100, 2: 500, 3: 1500, 4: 4000, 5: 8000,
   }
   searchTimeLimit = timeLimitMap[difficulty]
 
-  // Depth per difficulty
   const depthMap: Record<AIDifficulty, number> = {
-    1: 1,
-    2: 3,
-    3: 5,
-    4: 7,
-    5: 12,
+    1: 2, 2: 5, 3: 8, 4: 15, 5: 25,
   }
   const maxDepth = depthMap[difficulty]
 
-  // Set up board reference and compute initial hash
   board = b
-
   const epTarget = getEnPassantTarget(lastMove)
   const epFile = epTarget ? epTarget.col : null
   searchHash = computeHash(board, color, epFile)
 
-  // Only one legal move? Return it immediately
-  const moves = generateLegalMoves(board, color, epTarget, false, lastMove)
+  const moves = generateLegalMoves(color, epTarget, false, lastMove)
   if (moves.length === 0) return null
   if (moves.length === 1) return moves[0]!
 
-  // Run iterative deepening
-  const result = iterativeDeepening(epTarget, lastMove, maxDepth)
-
+  const result = iterativeDeepening(color, epTarget, lastMove, maxDepth)
   if (!result) return moves[0]!
 
-  // For unpredictable style or low difficulty, add controlled randomness
+  // Randomization for low difficulty / unpredictable style
   if (style === 'unpredictable' || difficulty <= 2) {
-    // Collect top moves within a small margin
     const topMoves: AIDetailedMove[] = [result.bestMove]
-    const margin = difficulty <= 1 ? 200 : 50
-
     for (const move of moves) {
       if (move === result.bestMove) continue
-      // Quick re-evaluation at depth 1
-      const { changes, newEnPassantTarget } = makeMove(board, move)
-      const score = -evaluateBoardInternal(board, color)
-      unmakeMove(board, changes)
-      // Just use a simple random selection from the top few
-      const r = Math.random()
-      if (r < 0.3 / moves.length) {
-        topMoves.push(move)
-      }
+      const oldEpFile = epTarget ? epTarget.col : null
+      const { changes, oldHash } = makeMove(move, oldEpFile)
+      const score = evaluateBoardInternal(color)
+      unmakeMove(changes, oldHash)
+      if (Math.random() < 0.3 / moves.length) topMoves.push(move)
     }
-
     if (topMoves.length > 1 && difficulty <= 1) {
-      // Low difficulty: pick randomly from all legal moves sometimes
-      if (Math.random() < 0.3) {
-        return moves[Math.floor(Math.random() * moves.length)]!
-      }
+      if (Math.random() < 0.3) return moves[Math.floor(Math.random() * moves.length)]!
     }
-
-    const randomIndex = Math.floor(Math.random() * topMoves.length)
-    return topMoves[randomIndex]!
+    return topMoves[Math.floor(Math.random() * topMoves.length)]!
   }
 
   return result.bestMove
 }
 
-// ============================================================
-// Public API: getPromotionChoice
-// ============================================================
 export function getPromotionChoice(
-  b: Board,
-  toRow: number,
-  toCol: number,
-  color: Color,
+  b: Board, toRow: number, toCol: number, color: Color,
 ): 'queen' | 'knight' | 'rook' | 'bishop' {
-  const enemyColor: Color = color === 'white' ? 'black' : 'white'
-  const enemyKingRow = findKingRow(b, enemyColor)
-  const enemyKingCol = findKingCol(b, enemyColor)
-
-  // Check if promoting to knight gives a check
+  const opponent = oppositeColor(color)
+  const enemyKingRow = findKingRow(b, opponent)
+  const enemyKingCol = findKingCol(b, opponent)
   const knightOffsets: [number, number][] = [
     [2, 1], [2, -1], [-2, 1], [-2, -1],
     [1, 2], [1, -2], [-1, 2], [-1, -2],
   ]
   for (const [dRow, dCol] of knightOffsets) {
-    if (toRow + dRow === enemyKingRow && toCol + dCol === enemyKingCol) {
-      return 'knight'
-    }
+    if (toRow + dRow === enemyKingRow && toCol + dCol === enemyKingCol) return 'knight'
   }
   return 'queen'
 }
 
-// ============================================================
-// Public API: getTotalLegalMoveCount
-// ============================================================
 export function getTotalLegalMoveCount(
-  b: Board,
-  color: Color,
-  lastMove: { from: Square; to: Square } | null,
+  b: Board, color: Color, lastMove: { from: Square; to: Square } | null,
 ): number {
+  const savedBoard = board
+  board = b
   const epTarget = getEnPassantTarget(lastMove)
-  return generateLegalMoves(b, color, epTarget, false, lastMove).length
+  const count = generateLegalMoves(color, epTarget, false, lastMove).length
+  board = savedBoard
+  return count
 }
 
-// ============================================================
-// Public API: getMaterialAdvantage
-// ============================================================
 export function getMaterialAdvantage(b: Board, color: Color): number {
   let score = 0
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const piece = b[row]![col]
       if (!piece) continue
-      const value = PIECE_VALUES[piece.type] ?? 0
-      score += piece.color === color ? value : -value
+      score += piece.color === color ? (PIECE_VALUES[piece.type] ?? 0) : -(PIECE_VALUES[piece.type] ?? 0)
     }
   }
   return score
