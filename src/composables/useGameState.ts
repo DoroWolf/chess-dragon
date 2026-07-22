@@ -380,15 +380,15 @@ export function useGameState(
 
   const gameStatusMessage = computed(() => {
     if (hasResigned.value) {
-      const winner = hasResigned.value === 'white' ? '黑棋' : '白棋'
+      const winner = hasResigned.value === 'white' ? '黑方' : '白方'
       return `${winner}胜利（对手认输）`
     }
     if (timeoutWinner.value) {
-      const winner = timeoutWinner.value === 'white' ? '白棋' : '黑棋'
+      const winner = timeoutWinner.value === 'white' ? '白方' : '黑方'
       return `${winner}胜利（超时）`
     }
     if (isCheckmate(board.value, currentTurn.value)) {
-      const winner = currentTurn.value === 'white' ? '黑棋' : '白棋'
+      const winner = currentTurn.value === 'white' ? '黑方' : '白方'
       return `${winner}胜利（将死）`
     }
     if (isDraw.value) {

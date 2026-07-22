@@ -168,10 +168,10 @@ const movePairs = computed<MovePair[]>(() => {
 const gameResult = computed(() => {
   if (!props.isGameOver && !props.gameStatus) return ''
 
-  if (props.gameStatus?.includes('白棋胜利')) {
+  if (props.gameStatus?.includes('白方胜利')) {
     return '1-0'
   }
-  if (props.gameStatus?.includes('黑棋胜利')) {
+  if (props.gameStatus?.includes('黑方胜利')) {
     return '0-1'
   }
   if (props.gameStatus?.includes('和棋')) {
