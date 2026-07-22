@@ -9,7 +9,7 @@ import type {
 } from './chess'
 import {
   getPieceMoves,
-  isKingInCheck,
+  isKingInCheck as isKingInCheckChess,
   getEnPassantTarget,
   isWhiteSquare,
 } from './chess'
@@ -42,6 +42,8 @@ const PIECE_VALUES: Record<string, number> = {
   queen: 900,
   king: 20000,
 }
+
+const PIECE_VALUE_ARRAY: number[] = [100, 320, 330, 500, 900, 20000]
 
 const PIECE_TYPE_INDEX: Record<string, number> = {
   pawn: 0,
@@ -149,6 +151,51 @@ const KING_ENDGAME_TABLE: number[][] = [
 ]
 
 // ============================================================
+// Pre-computed Piece-Square Tables by color
+// PST_BY_COLOR[pieceType][color][row][col] - eliminates branch
+// ============================================================
+const PST_BY_COLOR: number[][][][] = (() => {
+  const tables: number[][][] = [
+    PAWN_TABLE,
+    KNIGHT_TABLE,
+    BISHOP_TABLE,
+    ROOK_TABLE,
+    QUEEN_TABLE,
+    KING_MIDDLE_TABLE, // index 5 = king middle
+  ]
+  const result: number[][][][] = []
+  for (let pt = 0; pt < 6; pt++) {
+    result[pt] = []
+    for (let c = 0; c < 2; c++) {
+      result[pt]![c] = Array.from({ length: 8 }, () => new Array(8).fill(0))
+      for (let r = 0; r < 8; r++) {
+        for (let co = 0; co < 8; co++) {
+          // Black only needs row flip (white's row 0 = black's row 7).
+          // Column is NOT flipped — the board is symmetric left-right.
+          const adjR = c === 0 ? r : 7 - r
+          result[pt]![c]![r]![co] = tables[pt]![adjR]![co]!
+        }
+      }
+    }
+  }
+  // Also generate king endgame table as index 6
+  result[6] = []
+  for (let c = 0; c < 2; c++) {
+    result[6]![c] = Array.from({ length: 8 }, () => new Array(8).fill(0))
+    for (let r = 0; r < 8; r++) {
+      for (let co = 0; co < 8; co++) {
+        const adjR = c === 0 ? r : 7 - r
+        result[6]![c]![r]![co] = KING_ENDGAME_TABLE[adjR]![co]!
+      }
+    }
+  }
+  return result
+})()
+
+// PST table index for king endgame
+const PST_KING_ENDGAME = 6
+
+// ============================================================
 // Seeded PRNG for Zobrist keys
 // ============================================================
 function xorshift32(state: number): () => number {
@@ -165,16 +212,13 @@ const rng = xorshift32(0xDEADBEEF)
 // ============================================================
 // Zobrist Hashing Tables
 // ============================================================
-// zobristPiece[pieceTypeIdx][colorIdx][row * 8 + col]
 const zobristPiece: number[][][] = Array.from({ length: 6 }, () =>
   Array.from({ length: 2 }, () => new Array(64).fill(0)),
 )
-// zobristEnPassant[file] - only for the file where en passant is possible
 const zobristEnPassant: number[] = new Array(8).fill(0)
-// zobristBlackToMove
+const zobristCastling: number[] = new Array(4).fill(0)
 let zobristBlackToMove = 0
 
-// Initialize all Zobrist keys
 ;(function initZobrist() {
   for (let pt = 0; pt < 6; pt++) {
     for (let c = 0; c < 2; c++) {
@@ -186,6 +230,9 @@ let zobristBlackToMove = 0
   for (let f = 0; f < 8; f++) {
     zobristEnPassant[f] = rng()
   }
+  for (let i = 0; i < 4; i++) {
+    zobristCastling[i] = rng()
+  }
   zobristBlackToMove = rng()
 })()
 
@@ -193,10 +240,10 @@ let zobristBlackToMove = 0
 // Transposition Table
 // ============================================================
 interface TTEntry {
-  hash: number // full hash for verification
+  hash: number
   depth: number
   score: number
-  flag: number // TT_EXACT | TT_ALPHA | TT_BETA
+  flag: number
   bestMove: AIDetailedMove | null
 }
 
@@ -234,8 +281,6 @@ function storeTT(
 ): void {
   const idx = hash & TT_MASK
   const existing = tt[idx]
-  // Always replace strategy (standard for chess)
-  // Except: don't replace an exact entry at the same depth with a lower-depth entry
   if (existing && existing.hash === hash && existing.depth > depth && existing.flag === TT_EXACT) {
     return
   }
@@ -245,13 +290,11 @@ function storeTT(
 // ============================================================
 // Killer Moves & History Table
 // ============================================================
-// killerMoves[depth][slot 0..1]
 const killerMoves: (AIDetailedMove | null)[][] = Array.from({ length: MAX_DEPTH }, () => [
   null,
   null,
 ])
 
-// historyTable[colorIdx][fromRow][fromCol][toRow][toCol]
 const historyTable: number[][][][][] = Array.from({ length: 2 }, () =>
   Array.from({ length: 8 }, () =>
     Array.from({ length: 8 }, () =>
@@ -261,16 +304,15 @@ const historyTable: number[][][][][] = Array.from({ length: 2 }, () =>
 )
 
 function recordKillerMove(move: AIDetailedMove, depth: number): void {
-  if (move.special) return // don't store special moves (castling, en passant)
-  const from = board[move.fromRow]?.[move.fromCol]
+  if (move.special) return
   const to = board[move.toRow]?.[move.toCol]
-  if (to) return // don't store captures (they're already ordered by MVV-LVA)
+  if (to) return
 
   const slot = killerMoves[depth]!
   const killer0 = slot[0]
   if (killer0 && killer0.fromRow === move.fromRow && killer0.fromCol === move.fromCol &&
     killer0.toRow === move.toRow && killer0.toCol === move.toCol) {
-    return // already stored
+    return
   }
   slot[1] = killer0 ?? null
   slot[0] = move
@@ -295,14 +337,14 @@ interface BoardChange {
 }
 
 function makeChange(
-  board: Board,
+  b: Board,
   row: number,
   col: number,
   newPiece: Piece | null,
   changes: BoardChange[],
 ): void {
-  changes.push({ row, col, oldPiece: board[row]![col]! })
-  board[row]![col] = newPiece
+  changes.push({ row, col, oldPiece: b[row]![col]! })
+  b[row]![col] = newPiece
 }
 
 /**
@@ -310,7 +352,7 @@ function makeChange(
  * Also returns the new en passant target and whether a pawn was promoted.
  */
 function makeMove(
-  board: Board,
+  b: Board,
   move: AIDetailedMove,
 ): {
   changes: BoardChange[]
@@ -318,37 +360,32 @@ function makeMove(
   wasPromotion: boolean
 } {
   const changes: BoardChange[] = []
-  const piece = board[move.fromRow]![move.fromCol]!
+  const piece = b[move.fromRow]![move.fromCol]!
 
   let newEnPassantTarget: { row: number; col: number } | null = null
   let wasPromotion = false
 
   if (move.special === 'castle' && move.rookFrom && move.rookTo) {
-    // Move king
-    makeChange(board, move.toRow, move.toCol, { ...piece, hasMoved: true }, changes)
-    makeChange(board, move.fromRow, move.fromCol, null, changes)
-    // Move rook
-    const rook = board[move.rookFrom.row]![move.rookFrom.col]!
-    makeChange(board, move.rookTo.row, move.rookTo.col, { ...rook, hasMoved: true }, changes)
-    makeChange(board, move.rookFrom.row, move.rookFrom.col, null, changes)
+    makeChange(b, move.toRow, move.toCol, { ...piece, hasMoved: true }, changes)
+    makeChange(b, move.fromRow, move.fromCol, null, changes)
+    const rook = b[move.rookFrom.row]![move.rookFrom.col]!
+    makeChange(b, move.rookTo.row, move.rookTo.col, { ...rook, hasMoved: true }, changes)
+    makeChange(b, move.rookFrom.row, move.rookFrom.col, null, changes)
   } else if (move.special === 'enPassant') {
-    // Move pawn
     const promotedType = (move.toRow === 0 || move.toRow === 7)
       ? move.promotion ?? 'queen'
       : piece.type
     makeChange(
-      board,
+      b,
       move.toRow,
       move.toCol,
       { type: promotedType, color: piece.color, hasMoved: true },
       changes,
     )
-    makeChange(board, move.fromRow, move.fromCol, null, changes)
-    // Remove captured pawn
-    makeChange(board, move.fromRow, move.toCol, null, changes)
+    makeChange(b, move.fromRow, move.fromCol, null, changes)
+    makeChange(b, move.fromRow, move.toCol, null, changes)
     wasPromotion = promotedType !== 'pawn'
   } else {
-    // Normal move (including promotion)
     const isPawn = piece.type === 'pawn'
     const isDoublePush = isPawn && Math.abs(move.toRow - move.fromRow) === 2
     const promotedType = isPawn && (move.toRow === 0 || move.toRow === 7)
@@ -356,13 +393,13 @@ function makeMove(
       : piece.type
 
     makeChange(
-      board,
+      b,
       move.toRow,
       move.toCol,
       { type: promotedType, color: piece.color, hasMoved: true },
       changes,
     )
-    makeChange(board, move.fromRow, move.fromCol, null, changes)
+    makeChange(b, move.fromRow, move.fromCol, null, changes)
 
     if (isDoublePush) {
       newEnPassantTarget = {
@@ -379,38 +416,116 @@ function makeMove(
 /**
  * Undo a move by restoring all changed squares.
  */
-function unmakeMove(board: Board, changes: BoardChange[]): void {
+function unmakeMove(b: Board, changes: BoardChange[]): void {
   for (let i = changes.length - 1; i >= 0; i--) {
     const ch = changes[i]!
-    board[ch.row]![ch.col] = ch.oldPiece
+    b[ch.row]![ch.col] = ch.oldPiece
   }
 }
 
 // ============================================================
+// Search state tracking
+// ============================================================
+function packMove(move: AIDetailedMove): number {
+  return (move.fromRow << 9) | (move.fromCol << 6) | (move.toRow << 3) | move.toCol
+}
+
+function movesMatch(a: AIDetailedMove | null, b: AIDetailedMove): boolean {
+  if (!a) return false
+  return a.fromRow === b.fromRow && a.fromCol === b.fromCol &&
+    a.toRow === b.toRow && a.toCol === b.toCol &&
+    a.special === b.special
+}
+
+function oppositeColor(color: Color): Color {
+  return color === 'white' ? 'black' : 'white'
+}
+
+// ============================================================
+// Incremental Board State (saved/restored alongside hash)
+// ============================================================
+/**
+ * Compute the change in TOTAL material on the board for a move.
+ * Negative when a piece is captured (removed from board).
+ * Positive when a pawn promotes to a higher-value piece.
+ * Call BEFORE makeMove with pre-move board state.
+ */
+function computeMaterialDelta(move: AIDetailedMove): number {
+  const piece = board[move.fromRow]![move.fromCol]!
+  let delta = 0
+
+  // Captured piece: total board material decreases
+  if (move.special === 'enPassant') {
+    // En passant captures a pawn at (fromRow, toCol)
+    delta -= PIECE_VALUES['pawn']!
+  } else {
+    const victim = board[move.toRow]![move.toCol]
+    if (victim) {
+      delta -= PIECE_VALUES[victim.type]!
+    }
+  }
+
+  // Promotion: pawn removed, higher-value piece added → net increase
+  if (move.promotion && piece.type === 'pawn' && (move.toRow === 0 || move.toRow === 7)) {
+    const oldVal = PIECE_VALUES['pawn']!
+    const newVal = PIECE_VALUES[move.promotion] ?? PIECE_VALUES['queen']!
+    delta += (newVal - oldVal)
+  }
+
+  return delta
+}
+
+// ============================================================
+// Fast material count from board (only used for initialization)
+// ============================================================
+function computeMaterialFromBoard(b: Board): number {
+  let total = 0
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const p = b[r]![c]
+      if (p && p.type !== 'king') {
+        total += PIECE_VALUES[p.type] ?? 0
+      }
+    }
+  }
+  return total
+}
+
+// ============================================================
+// Fast endgame detection (O(1) with tracked material)
+// ============================================================
+function isEndgameFast(material: number): boolean {
+  // Endgame threshold: total material excluding kings <= 1400
+  return material <= 1400
+}
+
+// ============================================================
 // Move Generation (legal moves for a color)
+// Now uses tracked king positions for fast legality check
 // ============================================================
 function generateLegalMoves(
-  board: Board,
+  b: Board,
   color: Color,
   enPassantTarget: { row: number; col: number } | null,
   capturesOnly: boolean,
   lastMove: { from: Square; to: Square } | null,
+  kingRow: number,
+  kingCol: number,
 ): AIDetailedMove[] {
   const moves: AIDetailedMove[] = []
 
-  // Compute en passant target from lastMove if not provided
   const epTarget = enPassantTarget ?? getEnPassantTarget(lastMove)
   const moveOpts: MoveOptions = { enPassantTarget: epTarget, lastMove }
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
-      const piece = board[row]![col]
+      const piece = b[row]![col]
       if (!piece || piece.color !== color) continue
 
-      const candidateMoves = getPieceMoves(board, row, col, moveOpts)
+      const candidateMoves = getPieceMoves(b, row, col, moveOpts)
 
       for (const m of candidateMoves) {
-        const isCapture = board[m.row]![m.col] !== null || m.special === 'enPassant'
+        const isCapture = b[m.row]![m.col] !== null || m.special === 'enPassant'
 
         if (capturesOnly && !isCapture) continue
 
@@ -424,15 +539,14 @@ function generateLegalMoves(
           rookTo: m.rookTo,
         }
 
-        // For promotion moves, add queen promotion
         if (piece.type === 'pawn' && (m.row === 0 || m.row === 7)) {
           detailedMove.promotion = 'queen'
         }
 
-        // Test legality using make/unmake
-        const { changes } = makeMove(board, detailedMove)
-        const legal = !isKingInCheck(board, color)
-        unmakeMove(board, changes)
+        // Fast legality check using tracked king position
+        const { changes, newEnPassantTarget: _epT } = makeMove(b, detailedMove)
+        const legal = !isKingInCheckFast(b, color, kingRow, kingCol, piece, detailedMove)
+        unmakeMove(b, changes)
 
         if (legal) {
           moves.push(detailedMove)
@@ -442,6 +556,107 @@ function generateLegalMoves(
   }
 
   return moves
+}
+
+// ============================================================
+// Fast isKingInCheck using tracked king position + move info
+// ============================================================
+function isKingInCheckFast(
+  b: Board,
+  color: Color,
+  kingRow: number,
+  kingCol: number,
+  movedPiece: Piece,
+  move: AIDetailedMove,
+): boolean {
+  const enemyColor: Color = color === 'white' ? 'black' : 'white'
+
+  // Determine the king's position after the move
+  let kRow = kingRow
+  let kCol = kingCol
+  if (movedPiece.type === 'king') {
+    kRow = move.toRow
+    kCol = move.toCol
+  }
+
+  return isSquareAttackedFast(b, kRow, kCol, enemyColor)
+}
+
+// ============================================================
+// Fast square attack check (extracted from chess.ts for performance)
+// ============================================================
+function isSquareAttackedFast(
+  b: Board,
+  row: number,
+  col: number,
+  attackerColor: Color,
+): boolean {
+  // Pawn attacks
+  const pawnRow = attackerColor === 'white' ? row + 1 : row - 1
+  if (pawnRow >= 0 && pawnRow < 8) {
+    if (col - 1 >= 0) {
+      const p = b[pawnRow]![col - 1]
+      if (p && p.type === 'pawn' && p.color === attackerColor) return true
+    }
+    if (col + 1 < 8) {
+      const p = b[pawnRow]![col + 1]
+      if (p && p.type === 'pawn' && p.color === attackerColor) return true
+    }
+  }
+
+  // Knight attacks
+  const knightOffsets: [number, number][] = [
+    [2, 1], [2, -1], [-2, 1], [-2, -1],
+    [1, 2], [1, -2], [-1, 2], [-1, -2],
+  ]
+  for (let i = 0; i < 8; i++) {
+    const kr = row + knightOffsets[i]![0]
+    const kc = col + knightOffsets[i]![1]
+    if (kr >= 0 && kr < 8 && kc >= 0 && kc < 8) {
+      const p = b[kr]![kc]
+      if (p && p.type === 'knight' && p.color === attackerColor) return true
+    }
+  }
+
+  // Sliding pieces (bishop, rook, queen)
+  const directions: [number, number][] = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, 1], [1, -1], [-1, 1], [-1, -1],
+  ]
+  for (let d = 0; d < 8; d++) {
+    const dRow = directions[d]![0]
+    const dCol = directions[d]![1]
+    let cr = row + dRow
+    let cc = col + dCol
+    const isDiagonal = dRow !== 0 && dCol !== 0
+    while (cr >= 0 && cr < 8 && cc >= 0 && cc < 8) {
+      const p = b[cr]![cc]
+      if (p) {
+        if (p.color === attackerColor) {
+          if (isDiagonal && (p.type === 'bishop' || p.type === 'queen')) return true
+          if (!isDiagonal && (p.type === 'rook' || p.type === 'queen')) return true
+        }
+        break
+      }
+      cr += dRow
+      cc += dCol
+    }
+  }
+
+  // King attacks
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue
+      const kr = row + dr
+      const kc = col + dc
+      if (kr >= 0 && kr < 8 && kc >= 0 && kc < 8) {
+        const p = b[kr]![kc]
+        if (p && p.type === 'king' && p.color === attackerColor) return true
+      }
+    }
+  }
+
+  return false
 }
 
 // ============================================================
@@ -455,27 +670,20 @@ const MOVE_SCORE_KILLER2 = 800000
 function scoreMoveForOrdering(
   move: AIDetailedMove,
   ttMove: AIDetailedMove | null,
-  board: Board,
+  b: Board,
   depth: number,
 ): number {
   // 1. TT best move first
-  if (
-    ttMove &&
-    ttMove.fromRow === move.fromRow &&
-    ttMove.fromCol === move.fromCol &&
-    ttMove.toRow === move.toRow &&
-    ttMove.toCol === move.toCol &&
-    ttMove.special === move.special
-  ) {
+  if (movesMatch(ttMove, move)) {
     return MOVE_SCORE_TT
   }
 
   // 2. Captures by MVV-LVA
   const victim = move.special === 'enPassant'
-    ? board[move.fromRow]![move.toCol]
-    : board[move.toRow]![move.toCol]
+    ? b[move.fromRow]![move.toCol]
+    : b[move.toRow]![move.toCol]
   if (victim) {
-    const attacker = board[move.fromRow]![move.fromCol]
+    const attacker = b[move.fromRow]![move.fromCol]
     const victimVal = PIECE_VALUES[victim.type] ?? 0
     const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
     return MOVE_SCORE_CAPTURE_BASE + victimVal * 10 - attackerVal
@@ -483,33 +691,24 @@ function scoreMoveForOrdering(
 
   // 3. Promotion
   if (move.promotion) {
-    return MOVE_SCORE_CAPTURE_BASE + 900 // promote to queen
+    return MOVE_SCORE_CAPTURE_BASE + 900
   }
 
   // 4. Killer moves
-  const killer0 = killerMoves[depth]![0]
-  if (
-    killer0 &&
-    killer0.fromRow === move.fromRow &&
-    killer0.fromCol === move.fromCol &&
-    killer0.toRow === move.toRow &&
-    killer0.toCol === move.toCol
-  ) {
-    return MOVE_SCORE_KILLER_BASE
-  }
-  const killer1 = killerMoves[depth]![1]
-  if (
-    killer1 &&
-    killer1.fromRow === move.fromRow &&
-    killer1.fromCol === move.fromCol &&
-    killer1.toRow === move.toRow &&
-    killer1.toCol === move.toCol
-  ) {
-    return MOVE_SCORE_KILLER2
+  {
+    const slot = killerMoves[depth]
+    if (slot) {
+      if (movesMatch(slot[0] ?? null, move)) {
+        return MOVE_SCORE_KILLER_BASE
+      }
+      if (movesMatch(slot[1] ?? null, move)) {
+        return MOVE_SCORE_KILLER2
+      }
+    }
   }
 
   // 5. History heuristic
-  const piece = board[move.fromRow]![move.fromCol]
+  const piece = b[move.fromRow]![move.fromCol]
   if (piece && !move.special) {
     const ci = COLOR_INDEX[piece.color]!
     return historyTable[ci]![move.fromRow]![move.fromCol]![move.toRow]![move.toCol] ?? 0
@@ -519,18 +718,74 @@ function scoreMoveForOrdering(
 }
 
 // ============================================================
-// Search state (module-level, reset per search)
+// Module-level search state (reset per search)
 // ============================================================
 let board: Board = []
 let searchColor: Color = 'white'
 let searchStyle: AIStyle = 'balanced'
 let searchHash: number = 0
+let searchCastlingRights: number = 0
 let searchStartTime: number = 0
 let searchTimeLimit: number = 0
 let searchStopped: boolean = false
 let searchNodes: number = 0
-let pvLine: AIDetailedMove[] = []
 
+// Incremental tracking: king positions and material
+let trackedWhiteKingRow = 7
+let trackedWhiteKingCol = 4
+let trackedBlackKingRow = 0
+let trackedBlackKingCol = 4
+let trackedMaterial = 0 // total material excluding kings
+
+function getKingRow(color: Color): number {
+  return color === 'white' ? trackedWhiteKingRow : trackedBlackKingRow
+}
+
+function getKingCol(color: Color): number {
+  return color === 'white' ? trackedWhiteKingCol : trackedBlackKingCol
+}
+
+function setKingPos(color: Color, row: number, col: number): void {
+  if (color === 'white') {
+    trackedWhiteKingRow = row
+    trackedWhiteKingCol = col
+  } else {
+    trackedBlackKingRow = row
+    trackedBlackKingCol = col
+  }
+}
+
+/**
+ * Update incremental tracking after a move is made on the board.
+ * Must be called AFTER makeMove.
+ */
+function updateTrackingAfterMove(move: AIDetailedMove, materialDelta: number): void {
+  // After makeMove, the piece is at move.toRow. Get it from the board.
+  const movedPiece = board[move.toRow]![move.toCol]!
+  if (movedPiece && movedPiece.type === 'king') {
+    setKingPos(movedPiece.color, move.toRow, move.toCol)
+  }
+  trackedMaterial += materialDelta
+}
+
+/**
+ * Restore tracking to saved state (called after unmakeMove).
+ */
+function restoreTracking(
+  wkr: number, wkc: number,
+  bkr: number, bkc: number,
+  material: number,
+): void {
+  trackedWhiteKingRow = wkr
+  trackedWhiteKingCol = wkc
+  trackedBlackKingRow = bkr
+  trackedBlackKingCol = bkc
+  trackedMaterial = material
+}
+
+// ============================================================
+// Search time check
+// ============================================================
 function checkTimeLimit(): boolean {
   if (searchStopped) return true
   if (performance.now() - searchStartTime >= searchTimeLimit) {
@@ -541,12 +796,54 @@ function checkTimeLimit(): boolean {
 }
 
 // ============================================================
+// Castling rights detection from board state
+// ============================================================
+type CastlingRights = number
+
+function getCastlingRights(b: Board): CastlingRights {
+  let rights = 0
+  const wk = b[7]![4]
+  const wkr = b[7]![7]
+  if (wk && wk.type === 'king' && wk.color === 'white' && !wk.hasMoved &&
+      wkr && wkr.type === 'rook' && wkr.color === 'white' && !wkr.hasMoved) {
+    rights |= 1
+  }
+  const wqr = b[7]![0]
+  if (wk && wk.type === 'king' && wk.color === 'white' && !wk.hasMoved &&
+      wqr && wqr.type === 'rook' && wqr.color === 'white' && !wqr.hasMoved) {
+    rights |= 2
+  }
+  const bk = b[0]![4]
+  const bkr = b[0]![7]
+  if (bk && bk.type === 'king' && bk.color === 'black' && !bk.hasMoved &&
+      bkr && bkr.type === 'rook' && bkr.color === 'black' && !bkr.hasMoved) {
+    rights |= 4
+  }
+  const bqr = b[0]![0]
+  if (bk && bk.type === 'king' && bk.color === 'black' && !bk.hasMoved &&
+      bqr && bqr.type === 'rook' && bqr.color === 'black' && !bqr.hasMoved) {
+    rights |= 8
+  }
+  return rights
+}
+
+function castlingHash(rights: CastlingRights): number {
+  let h = 0
+  if (rights & 1) h ^= zobristCastling[0]!
+  if (rights & 2) h ^= zobristCastling[1]!
+  if (rights & 4) h ^= zobristCastling[2]!
+  if (rights & 8) h ^= zobristCastling[3]!
+  return h
+}
+
+// ============================================================
 // Compute Zobrist hash from board state
 // ============================================================
 function computeHash(
   b: Board,
   currentTurn: Color,
   enPassantFile: number | null,
+  castling: CastlingRights,
 ): number {
   let h = 0
   for (let r = 0; r < 8; r++) {
@@ -565,72 +862,148 @@ function computeHash(
   if (enPassantFile !== null && enPassantFile >= 0 && enPassantFile < 8) {
     h ^= zobristEnPassant[enPassantFile]!
   }
+  h ^= castlingHash(castling)
   return h >>> 0
 }
 
 // ============================================================
-// Incremental hash update for make/unmake
+// Incremental hash update for a single piece move
 // ============================================================
-function updateHashMove(
+function updateHashPiece(
   hash: number,
   piece: Piece,
   fromSq: number,
   toSq: number,
-  captured: Piece | null,
-  capturedSq: number,
-  oldEpFile: number | null,
-  newEpFile: number | null,
-  sideToMove: Color,
 ): number {
-  let h = hash
   const ptIdx = PIECE_TYPE_INDEX[piece.type]!
   const cIdx = COLOR_INDEX[piece.color]!
-
-  // Remove piece from source square
+  let h = hash
   h ^= zobristPiece[ptIdx]![cIdx]![fromSq]!
-  // Add piece to destination square
   h ^= zobristPiece[ptIdx]![cIdx]![toSq]!
+  return h
+}
 
-  // Remove captured piece
-  if (captured) {
-    const capPtIdx = PIECE_TYPE_INDEX[captured.type]!
-    const capCIdx = COLOR_INDEX[captured.color]!
-    h ^= zobristPiece[capPtIdx]![capCIdx]![capturedSq]!
+// ============================================================
+// Incremental hash update for a complete move
+// ============================================================
+/**
+ * Compute castling rights after removing rights for the given color's side(s).
+ * Returns a bitmask of rights that are STILL active after the update.
+ */
+function removeCastlingRights(rights: number, color: Color, which: 'both' | 'kingside' | 'queenside'): number {
+  let r = rights
+  if (color === 'white') {
+    if (which === 'both' || which === 'kingside') r &= ~1
+    if (which === 'both' || which === 'queenside') r &= ~2
+  } else {
+    if (which === 'both' || which === 'kingside') r &= ~4
+    if (which === 'both' || which === 'queenside') r &= ~8
+  }
+  return r
+}
+
+/**
+ * Incrementally update the Zobrist hash for a move.
+ * Returns the new hash AND the updated castling rights.
+ */
+function hashAfterMove(
+  oldHash: number,
+  move: AIDetailedMove,
+  oldEpFile: number | null,
+  newEpFile: number | null,
+  oldCastlingRights: number,
+): { hash: number; castlingRights: number } {
+  let h = oldHash
+
+  const piece = board[move.fromRow]![move.fromCol]!
+  const pieceColor = piece.color
+  const fromSq = move.fromRow * 8 + move.fromCol
+  const toSq = move.toRow * 8 + move.toCol
+
+  if (move.special === 'castle' && move.rookFrom && move.rookTo) {
+    h = updateHashPiece(h, piece, fromSq, toSq)
+    const rook = board[move.rookFrom.row]![move.rookFrom.col]!
+    const rookFromSq = move.rookFrom.row * 8 + move.rookFrom.col
+    const rookToSq = move.rookTo.row * 8 + move.rookTo.col
+    h = updateHashPiece(h, rook, rookFromSq, rookToSq)
+  } else if (move.special === 'enPassant') {
+    const ptIdx = PIECE_TYPE_INDEX['pawn']!
+    const cIdx = COLOR_INDEX[pieceColor]!
+    h ^= zobristPiece[ptIdx]![cIdx]![fromSq]!
+
+    const promotedType = move.promotion && move.promotion !== 'queen'
+      ? move.promotion
+      : (move.toRow === 0 || move.toRow === 7) ? 'queen' : piece.type
+    const destPtIdx = PIECE_TYPE_INDEX[promotedType]!
+    h ^= zobristPiece[destPtIdx]![cIdx]![toSq]!
+
+    const capturedSq = move.fromRow * 8 + move.toCol
+    const capCIdx = COLOR_INDEX[oppositeColor(pieceColor)]!
+    h ^= zobristPiece[PIECE_TYPE_INDEX['pawn']!]![capCIdx]![capturedSq]!
+  } else {
+    const isPromotion = move.promotion && (move.toRow === 0 || move.toRow === 7)
+    const destType = isPromotion ? move.promotion! : piece.type
+
+    const srcPtIdx = PIECE_TYPE_INDEX[piece.type]!
+    const cIdx = COLOR_INDEX[pieceColor]!
+    h ^= zobristPiece[srcPtIdx]![cIdx]![fromSq]!
+
+    const destPtIdx = PIECE_TYPE_INDEX[destType]!
+    h ^= zobristPiece[destPtIdx]![cIdx]![toSq]!
+
+    const captured = board[move.toRow]![move.toCol]
+    if (captured) {
+      const capPtIdx = PIECE_TYPE_INDEX[captured.type]!
+      const capCIdx = COLOR_INDEX[captured.color]!
+      h ^= zobristPiece[capPtIdx]![capCIdx]![toSq]!
+    }
   }
 
-  // Update en passant file
   if (oldEpFile !== null) h ^= zobristEnPassant[oldEpFile]!
   if (newEpFile !== null) h ^= zobristEnPassant[newEpFile]!
 
-  // Toggle side to move
+  // Update castling rights — only XOR out rights that were actually present,
+  // then XOR in the new rights. This correctly handles the case where a right
+  // was already absent (e.g., the rook already moved before the king).
+  let newRights = oldCastlingRights
+
+  // King move → lose all castling rights for that color
+  if (piece.type === 'king') {
+    newRights = removeCastlingRights(newRights, pieceColor, 'both')
+  }
+  // Rook move from original square → lose that side
+  if (piece.type === 'rook' && !piece.hasMoved) {
+    if (pieceColor === 'white' && fromSq === 63) newRights = removeCastlingRights(newRights, 'white', 'kingside')
+    if (pieceColor === 'white' && fromSq === 56) newRights = removeCastlingRights(newRights, 'white', 'queenside')
+    if (pieceColor === 'black' && fromSq === 7) newRights = removeCastlingRights(newRights, 'black', 'kingside')
+    if (pieceColor === 'black' && fromSq === 0) newRights = removeCastlingRights(newRights, 'black', 'queenside')
+  }
+  // Captured rook on its original square → lose that side
+  const capturedPiece = move.special === 'enPassant' ? null : board[move.toRow]![move.toCol]
+  if (capturedPiece && capturedPiece.type === 'rook' && !capturedPiece.hasMoved) {
+    const capSq = move.toRow * 8 + move.toCol
+    if (capturedPiece.color === 'white' && capSq === 63) newRights = removeCastlingRights(newRights, 'white', 'kingside')
+    if (capturedPiece.color === 'white' && capSq === 56) newRights = removeCastlingRights(newRights, 'white', 'queenside')
+    if (capturedPiece.color === 'black' && capSq === 7) newRights = removeCastlingRights(newRights, 'black', 'kingside')
+    if (capturedPiece.color === 'black' && capSq === 0) newRights = removeCastlingRights(newRights, 'black', 'queenside')
+  }
+
+  // XOR out old castling rights, XOR in new castling rights
+  h ^= castlingHash(oldCastlingRights)
+  h ^= castlingHash(newRights)
+
   h ^= zobristBlackToMove
 
-  return h >>> 0
+  return { hash: h >>> 0, castlingRights: newRights }
 }
 
 // ============================================================
-// Fast endgame detection
-// ============================================================
-function isEndgame(board: Board): boolean {
-  let totalMaterial = 0
-  let queenCount = 0
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const piece = board[r]![c]
-      if (!piece || piece.type === 'king') continue
-      totalMaterial += PIECE_VALUES[piece.type] ?? 0
-      if (piece.type === 'queen') queenCount++
-    }
-  }
-  return queenCount <= 1 || totalMaterial <= 1400
-}
-
-// ============================================================
-// Board Evaluation
+// Board Evaluation (optimized with pre-computed PSTs)
 // ============================================================
 function evaluateBoardInternal(b: Board, perspective: Color): number {
   let score = 0
-  const endgame = isEndgame(b)
+  const endgame = isEndgameFast(trackedMaterial)
+  const pstKingIdx = endgame ? PST_KING_ENDGAME : PIECE_TYPE_INDEX['king']!
 
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
@@ -638,37 +1011,15 @@ function evaluateBoardInternal(b: Board, perspective: Color): number {
       if (!piece) continue
 
       const sign = piece.color === perspective ? 1 : -1
-      const baseValue = PIECE_VALUES[piece.type] ?? 0
-      score += sign * baseValue
+      const ptIdx = PIECE_TYPE_INDEX[piece.type]!
+      const cIdx = COLOR_INDEX[piece.color]!
 
-      let posValue = 0
-      if (piece.type === 'king') {
-        const table = endgame ? KING_ENDGAME_TABLE : KING_MIDDLE_TABLE
-        const adjRow = piece.color === 'white' ? row : 7 - row
-        const adjCol = piece.color === 'white' ? col : 7 - col
-        posValue = table[adjRow]![adjCol]!
-      } else {
-        const adjRow = piece.color === 'white' ? row : 7 - row
-        const adjCol = piece.color === 'white' ? col : 7 - col
-        switch (piece.type) {
-          case 'pawn':
-            posValue = PAWN_TABLE[adjRow]![adjCol]!
-            break
-          case 'knight':
-            posValue = KNIGHT_TABLE[adjRow]![adjCol]!
-            break
-          case 'bishop':
-            posValue = BISHOP_TABLE[adjRow]![adjCol]!
-            break
-          case 'rook':
-            posValue = ROOK_TABLE[adjRow]![adjCol]!
-            break
-          case 'queen':
-            posValue = QUEEN_TABLE[adjRow]![adjCol]!
-            break
-        }
-      }
-      score += sign * posValue
+      // Material + PST combined
+      const baseValue = PIECE_VALUE_ARRAY[ptIdx]!
+      const pstIdx = piece.type === 'king' ? pstKingIdx : ptIdx
+      const posValue = PST_BY_COLOR[pstIdx]![cIdx]![row]![col]!
+
+      score += sign * (baseValue + posValue)
     }
   }
 
@@ -695,7 +1046,6 @@ function evaluateBoardInternal(b: Board, perspective: Color): number {
       for (let col = 0; col < 8; col++) {
         const piece = b[row]![col]
         if (!piece || piece.color !== perspective) continue
-        // Bonus for pieces near own king
         if (piece.type === 'pawn') {
           const leftSame = b[row]![col - 1]
           const rightSame = b[row]![col + 1]
@@ -721,48 +1071,100 @@ function quiescenceSearch(
   beta: number,
   enPassantTarget: { row: number; col: number } | null,
   lastMove: { from: Square; to: Square } | null,
+  currentColor: Color,
 ): number {
   if (checkTimeLimit()) return 0
-  
+
   searchNodes++
 
-  // Stand pat
-  const standPat = evaluateBoardInternal(board, searchColor)
-  if (standPat >= beta) return beta
-  if (standPat > alpha) alpha = standPat
+  // Save tracking state
+  const savedWKR = trackedWhiteKingRow
+  const savedWKC = trackedWhiteKingCol
+  const savedBKR = trackedBlackKingRow
+  const savedBKC = trackedBlackKingCol
+  const savedMat = trackedMaterial
 
-  // Generate captures
-  const captures = generateLegalMoves(board, searchColor, enPassantTarget, true, lastMove)
-  if (captures.length === 0) return alpha
+  // --- Stand pat check with check detection ---
+  // We must check if the current side is in check.
+  // If in check, we cannot stand pat — all evasions (including non-captures) must be searched.
+  // But since quiescenceSearch is called with capturesOnly=true for recursive calls,
+  // we need to handle this properly.
+  const kRow = getKingRow(currentColor)
+  const kCol = getKingCol(currentColor)
+  const inCheck = isSquareAttackedFast(board, kRow, kCol, oppositeColor(currentColor))
 
-  // Score captures for ordering
-  const scored: { move: AIDetailedMove; score: number }[] = captures.map((m) => {
+  let standPat = -INF
+  if (!inCheck) {
+    standPat = evaluateBoardInternal(board, currentColor)
+    if (standPat >= beta) return beta
+    if (standPat > alpha) alpha = standPat
+  }
+
+  // When in check, generate ALL legal moves (evasions), not just captures
+  const captures = generateLegalMoves(board, currentColor, enPassantTarget, !inCheck, lastMove, kRow, kCol)
+  if (captures.length === 0) {
+    // No legal moves: if in check, it's checkmate; if not, stalemate
+    if (inCheck) return -MATE_SCORE
+    return alpha
+  }
+
+  // Score captures using simple array - no object allocation for each move
+  const scores: number[] = new Array(captures.length)
+  for (let i = 0; i < captures.length; i++) {
+    const m = captures[i]!
     const victim = board[m.toRow]![m.toCol]
     const attacker = board[m.fromRow]![m.fromCol]
-    const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100 // en passant = pawn
-    const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
-    return {
-      move: m,
-      score: victimVal * 10 - attackerVal + (m.promotion ? 900 : 0),
-    }
-  })
-  scored.sort((a, b) => b.score - a.score)
-
-  for (const { move } of scored) {
-    // Delta pruning: skip captures that can't possibly improve alpha
-    const victim = move.special === 'enPassant'
-      ? board[move.fromRow]![move.toCol]
-      : board[move.toRow]![move.toCol]
     const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100
-    const promotionBonus = move.promotion ? 800 : 0
-    if (standPat + victimVal + promotionBonus + 200 < alpha) continue
+    const attackerVal = PIECE_VALUES[attacker?.type ?? 'pawn'] ?? 0
+    scores[i] = victimVal * 10 - attackerVal + (m.promotion ? 900 : 0)
+  }
 
+  // Sort by score descending
+  const indices = Array.from({ length: captures.length }, (_, i) => i)
+  indices.sort((a, b) => scores[b]! - scores[a]!)
+
+  const oldEpFile = enPassantTarget ? enPassantTarget.col : null
+
+  for (let idx = 0; idx < indices.length; idx++) {
+    const move = captures[indices[idx]!]!
+
+    // Delta pruning (skip when in check — all evasions must be tried)
+    if (!inCheck) {
+      const victim = move.special === 'enPassant'
+        ? board[move.fromRow]![move.toCol]
+        : board[move.toRow]![move.toCol]
+      const victimVal = victim ? PIECE_VALUES[victim.type] ?? 0 : 100
+      const promotionBonus = move.promotion ? 800 : 0
+      // standPat was computed above; alpha may have been raised by standPat
+      // delta pruning: if even best-case material gain can't reach alpha, skip
+      if (standPat + victimVal + promotionBonus + 200 < alpha) continue
+    }
+
+    const qPiece = board[move.fromRow]![move.fromCol]!
+    const nextEpFile: number | null =
+      qPiece.type === 'pawn' && Math.abs(move.toRow - move.fromRow) === 2
+        ? move.fromCol
+        : null
+
+    const oldHash = searchHash
+    const oldCastling = searchCastlingRights
+    const hashResult = hashAfterMove(oldHash, move, oldEpFile, nextEpFile, oldCastling)
+    searchHash = hashResult.hash
+    searchCastlingRights = hashResult.castlingRights
+
+    const matDelta = computeMaterialDelta(move)
     const { changes, newEnPassantTarget } = makeMove(board, move)
+    updateTrackingAfterMove(move, matDelta)
+
     const score = -quiescenceSearch(-beta, -alpha, newEnPassantTarget, {
       from: { row: move.fromRow, col: move.fromCol },
       to: { row: move.toRow, col: move.toCol },
-    })
+    }, oppositeColor(currentColor))
+
     unmakeMove(board, changes)
+    searchHash = oldHash
+    searchCastlingRights = oldCastling
+    restoreTracking(savedWKR, savedWKC, savedBKR, savedBKC, savedMat)
 
     if (score >= beta) return beta
     if (score > alpha) alpha = score
@@ -780,10 +1182,19 @@ function pvs(
   beta: number,
   enPassantTarget: { row: number; col: number } | null,
   lastMove: { from: Square; to: Square } | null,
+  currentColor: Color,
 ): number {
   if (checkTimeLimit()) return 0
 
   searchNodes++
+
+  // Save tracking state
+  const savedWKR = trackedWhiteKingRow
+  const savedWKC = trackedWhiteKingCol
+  const savedBKR = trackedBlackKingRow
+  const savedBKC = trackedBlackKingCol
+  const savedMat = trackedMaterial
+  const savedCastling = searchCastlingRights
 
   // Transposition table probe
   const ttEntry = probeTT(searchHash, depth, alpha, beta)
@@ -792,29 +1203,31 @@ function pvs(
   }
 
   // --- Terminal checks ---
-  const moves = generateLegalMoves(board, searchColor, enPassantTarget, false, lastMove)
+  const kRow = getKingRow(currentColor)
+  const kCol = getKingCol(currentColor)
+  const moves = generateLegalMoves(board, currentColor, enPassantTarget, false, lastMove, kRow, kCol)
 
   if (moves.length === 0) {
-    if (isKingInCheck(board, searchColor)) {
-      // Checkmate - prefer quicker mates
+    if (isSquareAttackedFast(board, kRow, kCol, oppositeColor(currentColor))) {
+      // Mate score: adjust by ply distance to prefer faster mates
       return -MATE_SCORE + (MAX_DEPTH - depth)
     }
-    // Stalemate
     return 0
   }
 
   // Enter quiescence search at depth 0
   if (depth <= 0) {
-    return quiescenceSearch(alpha, beta, enPassantTarget, lastMove)
+    return quiescenceSearch(alpha, beta, enPassantTarget, lastMove, currentColor)
   }
 
   // --- Null Move Pruning ---
-  const canNullMove = depth >= 3 && !isKingInCheck(board, searchColor)
+  const canNullMove = depth >= 3 && !isSquareAttackedFast(board, kRow, kCol, oppositeColor(currentColor)) && !isEndgameFast(trackedMaterial)
   if (canNullMove) {
     const R = 3 + Math.floor(depth / 4)
-    // Swap side to move (skip turn)
-    const nullEpTarget: { row: number; col: number } | null = null
-    const score = -pvs(depth - 1 - R, -beta, -beta + 1, nullEpTarget, null)
+    const oldHash = searchHash
+    searchHash ^= zobristBlackToMove
+    const score = -pvs(depth - 1 - R, -beta, -beta + 1, null, null, oppositeColor(currentColor))
+    searchHash = oldHash
     if (score >= beta) {
       return beta
     }
@@ -822,11 +1235,17 @@ function pvs(
 
   // --- Score and order moves ---
   const ttBestMove = ttEntry.bestMove
-  const scoredMoves: { move: AIDetailedMove; score: number }[] = moves.map((m) => ({
-    move: m,
-    score: scoreMoveForOrdering(m, ttBestMove, board, depth),
-  }))
-  scoredMoves.sort((a, b) => b.score - a.score)
+  const numMoves = moves.length
+
+  // Create scores array (no object allocation per move)
+  const scores: number[] = new Array(numMoves)
+  for (let i = 0; i < numMoves; i++) {
+    scores[i] = scoreMoveForOrdering(moves[i]!, ttBestMove, board, depth)
+  }
+
+  // Sort indices by score descending
+  const indices = Array.from({ length: numMoves }, (_, i) => i)
+  indices.sort((a, b) => scores[b]! - scores[a]!)
 
   // --- Search moves ---
   let bestScore = -INF
@@ -834,15 +1253,18 @@ function pvs(
   let flag = TT_ALPHA
   let movesSearched = 0
 
-  for (const { move } of scoredMoves) {
+  const oldEpFile = enPassantTarget ? enPassantTarget.col : null
+
+  for (let idx = 0; idx < indices.length; idx++) {
     movesSearched++
+    const move = moves[indices[idx]!]!
 
     // Late Move Reduction
     let reduction = 0
     if (
       movesSearched >= 4 &&
       depth >= 3 &&
-      !board[move.toRow]![move.toCol] && // not a capture
+      !board[move.toRow]![move.toCol] &&
       move.special !== 'enPassant' &&
       !move.promotion
     ) {
@@ -850,29 +1272,48 @@ function pvs(
       if (reduction > depth - 1) reduction = depth - 1
     }
 
+    const pvsPiece = board[move.fromRow]![move.fromCol]!
+    const pvsNextEpFile: number | null =
+      pvsPiece.type === 'pawn' && Math.abs(move.toRow - move.fromRow) === 2
+        ? move.fromCol
+        : null
+
+    const oldHash = searchHash
+    const oldCastling = searchCastlingRights
+    const hashResult = hashAfterMove(oldHash, move, oldEpFile, pvsNextEpFile, savedCastling)
+    searchHash = hashResult.hash
+    searchCastlingRights = hashResult.castlingRights
+
+    const matDelta = computeMaterialDelta(move)
     const { changes, newEnPassantTarget } = makeMove(board, move)
+    updateTrackingAfterMove(move, matDelta)
+
     const newLastMove: { from: Square; to: Square } = {
       from: { row: move.fromRow, col: move.fromCol },
       to: { row: move.toRow, col: move.toCol },
     }
 
+    const nextColor = oppositeColor(currentColor)
     let score: number
 
-    // First move: full window
     if (movesSearched === 1) {
-      score = -pvs(depth - 1 - reduction, -beta, -alpha, newEnPassantTarget, newLastMove)
+      score = -pvs(depth - 1 - reduction, -beta, -alpha, newEnPassantTarget, newLastMove, nextColor)
     } else {
-      // Zero-window search
-      score = -pvs(depth - 1 - reduction, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
-      // If the zero-window search indicates this might be better, re-search with full window
+      // Zero-window search at reduced depth
+      score = -pvs(depth - 1 - reduction, -alpha - 1, -alpha, newEnPassantTarget, newLastMove, nextColor)
+      // If zero-window spikes above alpha, and we reduced, re-search at full depth.
+      // If reduction was 0, the zero-window result is already at full depth — no re-search needed.
       if (score > alpha && score < beta && reduction > 0) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
-      } else if (score > alpha && score < beta) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove, nextColor)
       }
     }
 
     unmakeMove(board, changes)
+    searchHash = oldHash
+    searchCastlingRights = savedCastling
+    restoreTracking(savedWKR, savedWKC, savedBKR, savedBKC, savedMat)
+
+    if (checkTimeLimit()) return 0
 
     if (score > bestScore) {
       bestScore = score
@@ -887,15 +1328,17 @@ function pvs(
     if (score >= beta) {
       flag = TT_BETA
       bestMove = move
-      // Record killer & history for beta cutoffs
       recordKillerMove(move, depth)
-      recordHistory(move, searchColor, depth * depth)
+      recordHistory(move, currentColor, depth * depth)
       break
     }
   }
 
-  // Store in TT
-  storeTT(searchHash, depth, bestScore, flag, bestMove)
+  // Only write to TT if search was not interrupted by timeout.
+  // Aborted searches produce incomplete results that pollute the TT.
+  if (!checkTimeLimit()) {
+    storeTT(searchHash, depth, bestScore, flag, bestMove)
+  }
 
   return bestScore
 }
@@ -908,34 +1351,65 @@ function iterativeDeepening(
   lastMove: { from: Square; to: Square } | null,
   maxDepth: number,
 ): { bestMove: AIDetailedMove; score: number } | null {
-  const moves = generateLegalMoves(board, searchColor, initialEpTarget, false, lastMove)
+  const kRow = getKingRow(searchColor)
+  const kCol = getKingCol(searchColor)
+  const moves = generateLegalMoves(board, searchColor, initialEpTarget, false, lastMove, kRow, kCol)
   if (moves.length === 0) return null
 
   let bestMove: AIDetailedMove = moves[0]!
   let bestScore = -INF
 
-  // Score root moves for initial ordering
-  const rootMoves = moves.map((m) => ({
-    move: m,
-    score: scoreMoveForOrdering(m, null, board, 0),
-  }))
-  rootMoves.sort((a, b) => b.score - a.score)
+  const numMoves = moves.length
+  const rootScores: number[] = new Array(numMoves)
+  for (let i = 0; i < numMoves; i++) {
+    rootScores[i] = scoreMoveForOrdering(moves[i]!, null, board, 0)
+  }
+  const rootIndices = Array.from({ length: numMoves }, (_, i) => i)
+  rootIndices.sort((a, b) => rootScores[b]! - rootScores[a]!)
+
+  const opponentColorVal = oppositeColor(searchColor)
 
   for (let depth = 1; depth <= maxDepth; depth++) {
-    let localBestMove: AIDetailedMove = rootMoves[0]!.move
+    let localBestMove: AIDetailedMove = moves[rootIndices[0]!]!
     let localBestScore = -INF
     let alpha = -INF
     const beta = INF
 
     let firstMove = true
 
-    for (const { move } of rootMoves) {
+    const oldEpFile = initialEpTarget ? initialEpTarget.col : null
+
+    // Save tracking state for restoration
+    const savedWKR = trackedWhiteKingRow
+    const savedWKC = trackedWhiteKingCol
+    const savedBKR = trackedBlackKingRow
+    const savedBKC = trackedBlackKingCol
+    const savedMat = trackedMaterial
+    const savedCastling = searchCastlingRights
+
+    for (let idx = 0; idx < rootIndices.length; idx++) {
       if (checkTimeLimit()) {
-        // Time's up - return best from previous iteration
         return { bestMove, score: bestScore }
       }
 
+      const move = moves[rootIndices[idx]!]!
+
+      const idPiece = board[move.fromRow]![move.fromCol]!
+      const idNextEpFile: number | null =
+        idPiece.type === 'pawn' && Math.abs(move.toRow - move.fromRow) === 2
+          ? move.fromCol
+          : null
+
+      const oldHash = searchHash
+      const oldCastling = searchCastlingRights
+      const hashResult = hashAfterMove(oldHash, move, oldEpFile, idNextEpFile, oldCastling)
+      searchHash = hashResult.hash
+      searchCastlingRights = hashResult.castlingRights
+
+      const matDelta = computeMaterialDelta(move)
       const { changes, newEnPassantTarget } = makeMove(board, move)
+      updateTrackingAfterMove(move, matDelta)
+
       const newLastMove: { from: Square; to: Square } = {
         from: { row: move.fromRow, col: move.fromCol },
         to: { row: move.toRow, col: move.toCol },
@@ -943,17 +1417,19 @@ function iterativeDeepening(
 
       let score: number
       if (firstMove) {
-        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+        score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove, opponentColorVal)
         firstMove = false
       } else {
-        // Aspiration: search with narrow window first
-        score = -pvs(depth - 1, -alpha - 1, -alpha, newEnPassantTarget, newLastMove)
+        score = -pvs(depth - 1, -alpha - 1, -alpha, newEnPassantTarget, newLastMove, opponentColorVal)
         if (score > alpha && score < beta) {
-          score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove)
+          score = -pvs(depth - 1, -beta, -alpha, newEnPassantTarget, newLastMove, opponentColorVal)
         }
       }
 
       unmakeMove(board, changes)
+      searchHash = oldHash
+      searchCastlingRights = savedCastling
+      restoreTracking(savedWKR, savedWKC, savedBKR, savedBKC, savedMat)
 
       if (score > localBestScore) {
         localBestScore = score
@@ -964,25 +1440,20 @@ function iterativeDeepening(
       }
     }
 
-    // Full depth completed without timeout
     if (!searchStopped) {
       bestMove = localBestMove
       bestScore = localBestScore
 
-      // Re-sort root moves for next iteration (TT-guided)
-      rootMoves.sort((a, b) => {
-        return (
-          scoreMoveForOrdering(b.move, bestMove, board, depth + 1) -
-          scoreMoveForOrdering(a.move, bestMove, board, depth + 1)
-        )
-      })
+      // Re-sort root moves for next iteration
+      for (let i = 0; i < numMoves; i++) {
+        rootScores[i] = scoreMoveForOrdering(moves[i]!, bestMove, board, depth + 1)
+      }
+      rootIndices.sort((a, b) => rootScores[b]! - rootScores[a]!)
 
-      // Early exit if checkmate is found
       if (bestScore > MATE_SCORE - 100 || bestScore < -MATE_SCORE + 100) {
         return { bestMove, score: bestScore }
       }
     } else {
-      // Timed out - return best from completed iteration
       return { bestMove, score: bestScore }
     }
   }
@@ -991,26 +1462,18 @@ function iterativeDeepening(
 }
 
 // ============================================================
-// Find king row/col (utility)
+// Find king row/col (utility - used once for setup)
 // ============================================================
-function findKingRow(b: Board, color: Color): number {
+function findKing(b: Board, color: Color): { row: number; col: number } {
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const piece = b[row]![col]
-      if (piece && piece.type === 'king' && piece.color === color) return row
+      if (piece && piece.type === 'king' && piece.color === color) {
+        return { row, col }
+      }
     }
   }
-  return 0
-}
-
-function findKingCol(b: Board, color: Color): number {
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const piece = b[row]![col]
-      if (piece && piece.type === 'king' && piece.color === color) return col
-    }
-  }
-  return 0
+  return { row: 0, col: 0 }
 }
 
 // ============================================================
@@ -1031,44 +1494,59 @@ export function getBestAIMove(
   searchNodes = 0
   ttHits = 0
 
-  // Clear killer moves and history for new search
+  // Clear killer moves for new search
   for (let d = 0; d < MAX_DEPTH; d++) {
     killerMoves[d]![0] = null
     killerMoves[d]![1] = null
   }
-  // NOTE: historyTable is kept between searches (useful for move ordering across moves)
-  // NOTE: TT is kept between searches (useful for hash hits across moves)
-  // They help with move ordering and transpositions across the game.
+
+  // Clear history table for new search (prevents cross-position pollution)
+  for (let ci = 0; ci < 2; ci++) {
+    for (let fr = 0; fr < 8; fr++) {
+      for (let fc = 0; fc < 8; fc++) {
+        for (let tr = 0; tr < 8; tr++) {
+          const row = historyTable[ci]![fr]![fc]![tr]!
+          for (let tc = 0; tc < 8; tc++) {
+            row[tc] = 0
+          }
+        }
+      }
+    }
+  }
 
   // Time allocation per difficulty (ms)
   const timeLimitMap: Record<AIDifficulty, number> = {
-    1: 100,  // Basic: quick
-    2: 500,  // Easy
-    3: 1500, // Medium
-    4: 4000, // Hard
-    5: 8000, // Expert
+    1: 100,
+    2: 200,
+    3: 500,
+    4: 1000,
+    5: 2500,
   }
   searchTimeLimit = timeLimitMap[difficulty]
 
-  // Depth per difficulty
-  const depthMap: Record<AIDifficulty, number> = {
-    1: 1,
-    2: 3,
-    3: 5,
-    4: 7,
-    5: 12,
-  }
-  const maxDepth = depthMap[difficulty]
+  const maxDepth = 12
 
-  // Set up board reference and compute initial hash
+  // Set up board reference
   board = b
+
+  // Initialize incremental tracking (king positions and material)
+  const wk = findKing(b, 'white')
+  const bk = findKing(b, 'black')
+  trackedWhiteKingRow = wk.row
+  trackedWhiteKingCol = wk.col
+  trackedBlackKingRow = bk.row
+  trackedBlackKingCol = bk.col
+  trackedMaterial = computeMaterialFromBoard(b)
 
   const epTarget = getEnPassantTarget(lastMove)
   const epFile = epTarget ? epTarget.col : null
-  searchHash = computeHash(board, color, epFile)
+  searchCastlingRights = getCastlingRights(board)
+  searchHash = computeHash(board, color, epFile, searchCastlingRights)
 
   // Only one legal move? Return it immediately
-  const moves = generateLegalMoves(board, color, epTarget, false, lastMove)
+  const kRow = getKingRow(color)
+  const kCol = getKingCol(color)
+  const moves = generateLegalMoves(board, color, epTarget, false, lastMove, kRow, kCol)
   if (moves.length === 0) return null
   if (moves.length === 1) return moves[0]!
 
@@ -1079,17 +1557,12 @@ export function getBestAIMove(
 
   // For unpredictable style or low difficulty, add controlled randomness
   if (style === 'unpredictable' || difficulty <= 2) {
-    // Collect top moves within a small margin
     const topMoves: AIDetailedMove[] = [result.bestMove]
-    const margin = difficulty <= 1 ? 200 : 50
 
     for (const move of moves) {
       if (move === result.bestMove) continue
-      // Quick re-evaluation at depth 1
-      const { changes, newEnPassantTarget } = makeMove(board, move)
-      const score = -evaluateBoardInternal(board, color)
+      const { changes } = makeMove(board, move)
       unmakeMove(board, changes)
-      // Just use a simple random selection from the top few
       const r = Math.random()
       if (r < 0.3 / moves.length) {
         topMoves.push(move)
@@ -1097,7 +1570,6 @@ export function getBestAIMove(
     }
 
     if (topMoves.length > 1 && difficulty <= 1) {
-      // Low difficulty: pick randomly from all legal moves sometimes
       if (Math.random() < 0.3) {
         return moves[Math.floor(Math.random() * moves.length)]!
       }
@@ -1120,16 +1592,14 @@ export function getPromotionChoice(
   color: Color,
 ): 'queen' | 'knight' | 'rook' | 'bishop' {
   const enemyColor: Color = color === 'white' ? 'black' : 'white'
-  const enemyKingRow = findKingRow(b, enemyColor)
-  const enemyKingCol = findKingCol(b, enemyColor)
+  const kInfo = findKing(b, enemyColor)
 
-  // Check if promoting to knight gives a check
   const knightOffsets: [number, number][] = [
     [2, 1], [2, -1], [-2, 1], [-2, -1],
     [1, 2], [1, -2], [-1, 2], [-1, -2],
   ]
   for (const [dRow, dCol] of knightOffsets) {
-    if (toRow + dRow === enemyKingRow && toCol + dCol === enemyKingCol) {
+    if (toRow + dRow === kInfo.row && toCol + dCol === kInfo.col) {
       return 'knight'
     }
   }
@@ -1145,7 +1615,9 @@ export function getTotalLegalMoveCount(
   lastMove: { from: Square; to: Square } | null,
 ): number {
   const epTarget = getEnPassantTarget(lastMove)
-  return generateLegalMoves(b, color, epTarget, false, lastMove).length
+  // For non-search context, find king via scan
+  const kInfo = findKing(b, color)
+  return generateLegalMoves(b, color, epTarget, false, lastMove, kInfo.row, kInfo.col).length
 }
 
 // ============================================================
