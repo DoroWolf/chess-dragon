@@ -1,13 +1,18 @@
 <template>
   <div class="game-panel">
     <div class="board-frame" :class="{ 'coordinates-outside': coordinateLabelMode === 'outside' }">
-      <div class="board-grid" ref="boardGridRef">
+      <div class="board-grid" ref="boardGridRef"
+        @touchmove.prevent="handleBoardGridTouchMove($event)"
+        @touchend="handleBoardGridTouchEnd($event)">
         <template v-for="displayRow in 8" :key="`rank-${displayRow}`">
           <button v-for="displayCol in 8" :key="`${displayRow}-${displayCol}`" type="button" class="board-square"
             :class="{ 'draggable-piece': board[actualRow(displayRow - 1)]?.[actualCol(displayCol - 1)]?.color === currentTurn }"
             @mousedown="$emit('square-mousedown', actualRow(displayRow - 1), actualCol(displayCol - 1), $event)"
+            @touchstart.prevent="handleSquareTouchStart(actualRow(displayRow - 1), actualCol(displayCol - 1), $event)"
             @mouseenter="$emit('square-mouseenter', actualRow(displayRow - 1), actualCol(displayCol - 1))"
             @mouseleave="$emit('square-mouseleave')"
+            :data-row="actualRow(displayRow - 1)"
+            :data-col="actualCol(displayCol - 1)"
             :aria-label="getSquareLabel(actualRow(displayRow - 1), actualCol(displayCol - 1))">
 
             <img class="square-background base" draggable="false"
@@ -115,11 +120,26 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:pieceScale', value: number): void
   (e: 'square-mousedown', row: number, col: number, event: MouseEvent): void
+  (e: 'square-touchstart', row: number, col: number, event: TouchEvent): void
   (e: 'square-mouseenter', row: number, col: number): void
   (e: 'square-mouseleave'): void
+  (e: 'board-touchmove', event: TouchEvent): void
+  (e: 'board-touchend', event: TouchEvent): void
   (e: 'cancel-promotion'): void
   (e: 'apply-promotion', piece: string): void
 }>()
+
+const handleSquareTouchStart = (row: number, col: number, event: TouchEvent) => {
+  emit('square-touchstart', row, col, event)
+}
+
+const handleBoardGridTouchMove = (event: TouchEvent) => {
+  emit('board-touchmove', event)
+}
+
+const handleBoardGridTouchEnd = (event: TouchEvent) => {
+  emit('board-touchend', event)
+}
 
 // 视觉坐标 -> 逻辑坐标（内联，依赖 isFlipped prop）
 const actualRow = (displayRow: number): number =>
@@ -204,6 +224,7 @@ watch(pieceScale, (val) => {
   height: 100%;
   gap: 0;
   position: relative;
+  touch-action: none;
 }
 
 .board-square {

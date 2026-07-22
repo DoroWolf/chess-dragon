@@ -20,8 +20,11 @@
       :is-white-square="isWhiteSquare"
       @update:piece-scale="(val: number) => pieceScale = val"
       @square-mousedown="(row: number, col: number, event: MouseEvent) => handleMouseDown(row, col, event)"
+      @square-touchstart="(row: number, col: number, event: TouchEvent) => handleTouchStart(row, col, event)"
       @square-mouseenter="(row: number, col: number) => hoverSquare = { row, col }"
       @square-mouseleave="hoverSquare = null"
+      @board-touchmove="(event: TouchEvent) => handleTouchMove(event)"
+      @board-touchend="(event: TouchEvent) => handleTouchEnd(event)"
       @cancel-promotion="cancelPromotion"
       @apply-promotion="(piece: string) => applyPromotion(piece)" />
 
@@ -111,6 +114,9 @@ const {
   premove,
   canPremove,
   handleMouseDown,
+  handleTouchStart,
+  handleTouchMove,
+  handleTouchEnd,
   handleUndo,
   handleResign,
   handleDrawOffer,
@@ -141,7 +147,6 @@ onUnmounted(() => {
 .game-container {
   width: 100%;
   min-height: 100vh;
-  background-color: #f0f0f0;
   display: flex;
   justify-content: center;
   align-items: center;

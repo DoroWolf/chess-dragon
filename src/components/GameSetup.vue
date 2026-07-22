@@ -32,11 +32,6 @@
                     </label>
                 </div>
 
-                <div v-if="boardMode === 'chess960'" class="chess960-row">
-                    <span class="chess960-label">#{{ chess960Id }}</span>
-                    <button type="button" class="btn" @click="generateChess960">重新生成</button>
-                </div>
-
                 <input v-if="boardMode === 'custom'" v-model="fenInput" type="text" class="fen-input"
                     placeholder="在此处粘贴 FEN 文本" />
                 <p v-if="boardMode === 'custom' && fenInput.trim() && !isFenValid" class="fen-hint">无效的 FEN</p>
@@ -326,7 +321,9 @@ const handleStart = () => {
 }
 
 .title-img {
-    max-width: 60vh;
+    max-width: min(80vw, 500px); 
+    max-height: 30vh;
+    width: 100%;
     height: auto;
     object-fit: contain;
 }
@@ -432,18 +429,6 @@ const handleStart = () => {
     margin: 4px 0 0;
     color: #c33;
     font-size: 0.85rem;
-}
-
-.chess960-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 8px;
-}
-
-.chess960-label {
-    font-weight: 600;
-    font-size: 0.95rem;
 }
 
 .slider-row {

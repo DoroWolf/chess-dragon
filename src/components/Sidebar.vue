@@ -400,7 +400,6 @@ const materialDiffText = computed(() => {
   padding: 1rem;
   width: 100%;
   max-width: 300px;
-  background-color: #f0f0f0;
   font-family: 'Unifont', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: #222;
 }

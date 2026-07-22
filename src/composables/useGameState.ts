@@ -99,6 +99,7 @@ export function useGameState(
   const dragStartPos = ref({ x: 0, y: 0 })
   const mousePos = ref({ x: 0, y: 0 })
   let wasAlreadySelected = false
+  let touchStartSquare: { row: number; col: number } | null = null
 
   // ---- AI 对战状态 ----
   const gameMode = ref<'ai' | 'human' | 'remote'>('human')
@@ -795,11 +796,7 @@ export function useGameState(
     }
   }
 
-  const handleMouseUpResult = (toSquare: { row: number; col: number } | null) => {
-    const from = dragStartSquare.value
-
-    if (!from) return
-
+  const handleDropResult = (from: { row: number; col: number }, toSquare: { row: number; col: number } | null) => {
     if (toSquare) {
       if (from.row === toSquare.row && from.col === toSquare.col) {
         if (wasAlreadySelected) selectedSquare.value = null
@@ -809,12 +806,8 @@ export function useGameState(
       if (canMoveTo(toSquare.row, toSquare.col)) {
         handleSquareClick(toSquare.row, toSquare.col)
       } else {
-        const targetPiece = board.value[toSquare.row]?.[toSquare.col]
-        if (targetPiece && targetPiece.color === currentTurn.value && !isAITurn.value) {
-          selectedSquare.value = { row: toSquare.row, col: toSquare.col }
-        } else {
-          selectedSquare.value = null
-        }
+        // 修复：拖拽到不合法棋格（包括己方棋子格）时，取消选择
+        selectedSquare.value = null
       }
     } else {
       selectedSquare.value = null
@@ -870,18 +863,139 @@ export function useGameState(
       }
 
       // B. 处于正常玩家回合下的拖拽释放
-      if (canMoveTo(to.row, to.col)) {
-        handleSquareClick(to.row, to.col)
-      } else {
-        const targetPiece = board.value[to.row]?.[to.col]
-        if (targetPiece && targetPiece.color === currentTurn.value && !isAITurn.value) {
-          selectedSquare.value = { row: to.row, col: to.col }
-        } else {
-          selectedSquare.value = null
-        }
-      }
+      handleDropResult(from, to)
     } else {
       // 拖到棋盘外，清空选择
+      selectedSquare.value = null
+      premove.value = null
+    }
+  }
+
+  // ============================================================
+  // 触摸事件处理（移动端拖拽支持）
+  // ============================================================
+  const findSquareFromPoint = (clientX: number, clientY: number): { row: number; col: number } | null => {
+    const el = document.elementFromPoint(clientX, clientY)
+    if (!el) return null
+
+    // 查找最近的带有 data-row/data-col 的 button.board-square 元素
+    const squareBtn = el.closest('.board-square') as HTMLElement | null
+    if (!squareBtn) return null
+
+    const rowStr = squareBtn.getAttribute('data-row')
+    const colStr = squareBtn.getAttribute('data-col')
+    if (rowStr === null || colStr === null) return null
+
+    const row = parseInt(rowStr, 10)
+    const col = parseInt(colStr, 10)
+    if (isNaN(row) || isNaN(col)) return null
+
+    return { row, col }
+  }
+
+  const handleTouchStart = (row: number, col: number, event: TouchEvent) => {
+    // 既不能正常交互，也不能 premove 时直接返回
+    if (!canInteract.value && !canPremove.value) return
+
+    const piece = board.value[row]?.[col]
+    const isPlayerPiece = piece && piece.color === (canPremove.value ? playerColor.value : currentTurn.value)
+
+    if (isPlayerPiece) {
+      wasAlreadySelected = selectedSquare.value?.row === row && selectedSquare.value?.col === col
+      touchStartSquare = { row, col }
+
+      isMouseDown.value = true
+      isDragging.value = false
+      dragStartSquare.value = { row, col }
+
+      const touch = event.touches[0]
+      if (touch) {
+        dragStartPos.value = { x: touch.clientX, y: touch.clientY }
+        mousePos.value = { x: touch.clientX, y: touch.clientY }
+      }
+    } else {
+      // 点击空格或对方棋子
+      handleSquareClick(row, col)
+    }
+  }
+
+  const handleTouchMove = (event: TouchEvent) => {
+    if (!isMouseDown.value) return
+
+    const touch = event.touches[0]
+    if (!touch) return
+
+    mousePos.value = { x: touch.clientX, y: touch.clientY }
+
+    if (!isDragging.value) {
+      const dx = touch.clientX - dragStartPos.value.x
+      const dy = touch.clientY - dragStartPos.value.y
+      if (Math.sqrt(dx * dx + dy * dy) > 5) {
+        isDragging.value = true
+        selectedSquare.value = dragStartSquare.value
+      }
+    }
+
+    // 更新 hoverSquare（通过触摸点查找下方方格）
+    const square = findSquareFromPoint(touch.clientX, touch.clientY)
+    if (square) {
+      hoverSquare.value = square
+    } else {
+      hoverSquare.value = null
+    }
+  }
+
+  const handleTouchEnd = (_event: TouchEvent) => {
+    const from = dragStartSquare.value
+    const to = hoverSquare.value
+    const hadDragged = isDragging.value
+
+    isMouseDown.value = false
+    isDragging.value = false
+    dragStartSquare.value = null
+    touchStartSquare = null
+
+    if (!from) return
+
+    // ---- 1. 单击（没有发生拖拽） ----
+    if (!hadDragged) {
+      if (wasAlreadySelected) {
+        // 再次点击已选中的棋子则取消选择
+        selectedSquare.value = null
+        premove.value = null
+      } else {
+        // 点击未选中的棋子：选中它
+        selectedSquare.value = { row: from.row, col: from.col }
+      }
+      return
+    }
+
+    // ---- 2. 拖拽释放 ----
+    if (to) {
+      // 拖回原位
+      if (from.row === to.row && from.col === to.col) {
+        if (wasAlreadySelected) selectedSquare.value = null
+        return
+      }
+
+      // A. Premove 模式下的拖拽释放
+      if (canPremove.value) {
+        if (canPremoveTo(to.row, to.col)) {
+          premove.value = {
+            from: { row: from.row, col: from.col },
+            to: { row: to.row, col: to.col },
+          }
+        } else {
+          premove.value = null
+        }
+        selectedSquare.value = null
+        return
+      }
+
+      // B. 正常玩家回合下的拖拽释放
+      handleDropResult(from, to)
+    } else {
+      // 拖到棋盘外
       selectedSquare.value = null
       premove.value = null
     }
@@ -1338,6 +1452,9 @@ export function useGameState(
     handleMouseDown,
     handleMouseMove,
     handleMouseUp,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
 
     // 操作
     handleUndo,
