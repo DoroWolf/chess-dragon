@@ -14,8 +14,9 @@ import {
   generateMoveNotation,
 } from '../models/chess'
 import type { GameSetupConfig, AIStyle } from '../components/GameSetup.vue'
-import { getBestAIMove, getPromotionChoice, type AIDifficulty } from '../models/ai'
+import { getPromotionChoice, type AIDifficulty } from '../models/ai'
 import type { AIDetailedMove } from '../models/ai'
+import AIWorker from '../workers/ai-worker?worker'
 
 // ============================================================
 // 音频资源（模块级，避免重复创建 Audio 对象）
@@ -107,6 +108,7 @@ export function useGameState(
   const aiStyle = ref<AIStyle>('balanced')
   const isAIThinking = ref(false)
   let aiMoveTimer: number | null = null
+  let aiWorker: Worker | null = null
 
   // ---- Premove 状态 ----
   const premove = ref<{ from: { row: number; col: number }; to: { row: number; col: number } } | null>(null)
@@ -258,6 +260,10 @@ export function useGameState(
     if (aiMoveTimer !== null) {
       window.clearTimeout(aiMoveTimer)
       aiMoveTimer = null
+    }
+    if (aiWorker !== null) {
+      aiWorker.terminate()
+      aiWorker = null
     }
     isAIThinking.value = false
   }
@@ -1331,24 +1337,72 @@ export function useGameState(
         return
       }
 
-      const bestMove = getBestAIMove(
-        board.value,
-        aiColor,
-        aiDifficulty.value,
-        aiStyle.value,
-        lastMove.value,
-      )
+      // 创建新的 Web Worker 用于 AI 计算，避免阻塞 UI 线程
+      // 终止可能残留的旧 Worker（防御性编程）
+      if (aiWorker !== null) {
+        aiWorker.terminate()
+        aiWorker = null
+      }
 
-      isAIThinking.value = false
+      try {
+        aiWorker = new AIWorker()
+      } catch (err) {
+        console.error('Failed to create AI Worker:', err)
+        isAIThinking.value = false
+        return
+      }
 
-      if (bestMove) {
-        executeAIMoveOnBoard(bestMove)
-        // AI 走棋完成后，尝试执行玩家预设的 premove
-        if (!isGameOver.value && gameMode.value === 'ai') {
-          void nextTick(() => {
-            tryExecutePremove()
-          })
+      aiWorker.onmessage = (e: MessageEvent<{ type: string; move: AIDetailedMove | null }>) => {
+        aiWorker = null
+        isAIThinking.value = false
+
+        if (e.data.type === 'bestMove' && e.data.move) {
+          executeAIMoveOnBoard(e.data.move)
+          // AI 走棋完成后，尝试执行玩家预设的 premove
+          if (!isGameOver.value && gameMode.value === 'ai') {
+            void nextTick(() => {
+              tryExecutePremove()
+            })
+          }
         }
+      }
+
+      aiWorker.onmessageerror = () => {
+        console.error('AI Worker: message could not be deserialized')
+        aiWorker?.terminate()
+        aiWorker = null
+        isAIThinking.value = false
+      }
+
+      aiWorker.onerror = (err) => {
+        console.error('AI Worker error:', err)
+        aiWorker = null
+        isAIThinking.value = false
+      }
+
+      // JSON 序列化确保完全剥离 Vue 响应式 Proxy，避免 postMessage 的 DataCloneError
+      try {
+        const plainBoard = JSON.parse(JSON.stringify(board.value)) as Board
+        const plainLastMove = lastMove.value
+          ? (JSON.parse(JSON.stringify(lastMove.value)) as {
+              from: { row: number; col: number }
+              to: { row: number; col: number }
+            })
+          : null
+
+        aiWorker.postMessage({
+          type: 'findBestMove',
+          board: plainBoard,
+          color: aiColor,
+          difficulty: aiDifficulty.value,
+          style: aiStyle.value,
+          lastMove: plainLastMove,
+        })
+      } catch (err) {
+        console.error('Failed to post message to AI Worker:', err)
+        aiWorker?.terminate()
+        aiWorker = null
+        isAIThinking.value = false
       }
     }, thinkDelay)
   }
