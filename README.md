@@ -26,7 +26,7 @@
 <!-- **轻量纯前端** – Vue 3 + Vite，响应式适配 桌面与移动端-->
 
 ## 线上游玩
-立即体验 [Demo](https://dorowolf.github.io/chess-dragon)
+立即体验 [Demo](https://dorowolf.github.io/ChessDragon)
 
 ## 本地运行
 
