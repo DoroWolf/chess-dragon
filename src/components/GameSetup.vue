@@ -59,6 +59,29 @@
                 </div>
             </div>
 
+            <!-- AI 风格设置（仅人机对战） -->
+            <div v-if="gameMode === 'ai'" class="setup-section">
+                <h3>AI 风格</h3>
+                <div class="option-group">
+                    <label class="option-card" :class="{ active: aiStyle === 'balanced' }">
+                        <input v-model="aiStyle" type="radio" value="balanced" />
+                        <span>均衡</span>
+                    </label>
+                    <label class="option-card" :class="{ active: aiStyle === 'aggressive' }">
+                        <input v-model="aiStyle" type="radio" value="aggressive" />
+                        <span>进攻</span>
+                    </label>
+                    <label class="option-card" :class="{ active: aiStyle === 'defensive' }">
+                        <input v-model="aiStyle" type="radio" value="defensive" />
+                        <span>防守</span>
+                    </label>
+                    <label class="option-card" :class="{ active: aiStyle === 'unpredictable' }">
+                        <input v-model="aiStyle" type="radio" value="unpredictable" />
+                        <span>出其不意</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="setup-section">
                 <h3>执棋方</h3>
                 <div class="option-group">
@@ -94,6 +117,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+export type AIStyle = 'balanced' | 'aggressive' | 'defensive' | 'unpredictable'
+
 export interface GameSetupConfig {
     boardMode: 'standard' | 'custom'
     fen: string
@@ -102,6 +127,7 @@ export interface GameSetupConfig {
     starter: 'black' | 'random' | 'white'
     gameMode: 'ai' | 'human' | 'remote'
     difficulty: number
+    aiStyle: AIStyle
 }
 
 const emit = defineEmits<{
@@ -112,6 +138,7 @@ const emit = defineEmits<{
 const screen = ref<'home' | 'setup'>('home')
 const gameMode = ref<'ai' | 'human' | 'remote'>('ai')
 const difficulty = ref(3)
+const aiStyle = ref<AIStyle>('balanced')
 
 const boardMode = ref<'standard' | 'custom'>('standard')
 const fenInput = ref('')
@@ -154,6 +181,7 @@ const handleStart = () => {
         starter: starter.value,
         gameMode: gameMode.value,
         difficulty: difficulty.value,
+        aiStyle: aiStyle.value,
     })
 }
 </script>

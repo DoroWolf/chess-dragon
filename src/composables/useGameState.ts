@@ -1,4 +1,4 @@
-import { ref, computed, onUnmounted, type CSSProperties } from 'vue'
+import { ref, computed, onUnmounted, type CSSProperties, nextTick } from 'vue'
 import type { Board, Color, Piece, Move } from '../models/chess'
 import {
   createInitialBoard,
@@ -13,7 +13,9 @@ import {
   getPositionKey,
   generateMoveNotation,
 } from '../models/chess'
-import type { GameSetupConfig } from '../components/GameSetup.vue'
+import type { GameSetupConfig, AIStyle } from '../components/GameSetup.vue'
+import { getBestAIMove, getPromotionChoice, type AIDifficulty } from '../models/ai'
+import type { AIDetailedMove } from '../models/ai'
 
 // ============================================================
 // 音频资源（模块级，避免重复创建 Audio 对象）
@@ -97,6 +99,13 @@ export function useGameState(
   const dragStartPos = ref({ x: 0, y: 0 })
   const mousePos = ref({ x: 0, y: 0 })
   let wasAlreadySelected = false
+
+  // ---- AI 对战状态 ----
+  const gameMode = ref<'ai' | 'human' | 'remote'>('human')
+  const aiDifficulty = ref<AIDifficulty>(3)
+  const aiStyle = ref<AIStyle>('balanced')
+  const isAIThinking = ref(false)
+  let aiMoveTimer: number | null = null
 
   // ============================================================
   // 辅助函数
@@ -235,6 +244,14 @@ export function useGameState(
     }
     clockStarted.value = false
     activeClockColor.value = null
+  }
+
+  const cancelAIMove = () => {
+    if (aiMoveTimer !== null) {
+      window.clearTimeout(aiMoveTimer)
+      aiMoveTimer = null
+    }
+    isAIThinking.value = false
   }
 
   const handleClockTimeout = (expiredColor: Color) => {
@@ -380,7 +397,20 @@ export function useGameState(
       isCheckmate(board.value, currentTurn.value),
   )
 
-  const canInteract = computed(() => !showSetup.value && !isGameOver.value)
+  // 交互控制：setup 未结束 或 游戏结束 或 AI 正在思考 或 当前回合轮到 AI
+  const isAITurn = computed(() => {
+    if (gameMode.value !== 'ai') return false
+    const aiColor = playerColor.value === 'white' ? 'black' : 'white'
+    return currentTurn.value === aiColor
+  })
+
+  const canInteract = computed(
+    () =>
+      !showSetup.value &&
+      !isGameOver.value &&
+      !isAIThinking.value &&
+      !isAITurn.value,
+  )
 
   // ============================================================
   // 走棋逻辑
@@ -478,6 +508,11 @@ export function useGameState(
     // ---- 时钟与音效 ----
     applyClockAfterMove(selectedPiece.color, nextTurn, nextBoard)
     triggerGameStateAudio(isCapture, nextTurn, nextBoard)
+
+    // ---- 触发 AI（如果当前轮次是 AI 的回合） ----
+    void nextTick(() => {
+      checkAndTriggerAI()
+    })
   }
 
   const handleSquareClick = (row: number, col: number): void => {
@@ -511,7 +546,7 @@ export function useGameState(
       executeMove(nextBoard, move, { row: selected.row, col: selected.col }, isPawnMove, isCapture)
     } else {
       // ---- 选中/取消选中 ----
-      if (targetPiece && targetPiece.color === currentTurn.value) {
+      if (targetPiece && targetPiece.color === currentTurn.value && !isAITurn.value) {
         selectedSquare.value = { row, col }
       } else {
         selectedSquare.value = null
@@ -599,6 +634,11 @@ export function useGameState(
 
     applyClockAfterMove(selectedPiece.color, nextTurn, nextBoard)
     triggerGameStateAudio(isCapture, nextTurn, nextBoard)
+
+    // ---- 触发 AI（如果当前轮次是 AI 的回合） ----
+    void nextTick(() => {
+      checkAndTriggerAI()
+    })
   }
 
   // ============================================================
@@ -610,7 +650,7 @@ export function useGameState(
 
     const piece = board.value[row]?.[col]
 
-    if (piece && piece.color === currentTurn.value) {
+    if (piece && piece.color === currentTurn.value && !isAITurn.value) {
       wasAlreadySelected = selectedSquare.value?.row === row && selectedSquare.value?.col === col
       if (!wasAlreadySelected) {
         selectedSquare.value = { row, col }
@@ -645,7 +685,6 @@ export function useGameState(
   }
 
   const handleMouseUpResult = (toSquare: { row: number; col: number } | null) => {
-    // 被外部（hoverSquare 或 set null）调用，处理拖拽松手后的逻辑
     const from = dragStartSquare.value
 
     if (!from) return
@@ -660,7 +699,7 @@ export function useGameState(
         handleSquareClick(toSquare.row, toSquare.col)
       } else {
         const targetPiece = board.value[toSquare.row]?.[toSquare.col]
-        if (targetPiece && targetPiece.color === currentTurn.value) {
+        if (targetPiece && targetPiece.color === currentTurn.value && !isAITurn.value) {
           selectedSquare.value = { row: toSquare.row, col: toSquare.col }
         } else {
           selectedSquare.value = null
@@ -702,7 +741,7 @@ export function useGameState(
         handleSquareClick(to.row, to.col)
       } else {
         const targetPiece = board.value[to.row]?.[to.col]
-        if (targetPiece && targetPiece.color === currentTurn.value) {
+        if (targetPiece && targetPiece.color === currentTurn.value && !isAITurn.value) {
           selectedSquare.value = { row: to.row, col: to.col }
         } else {
           selectedSquare.value = null
@@ -719,27 +758,42 @@ export function useGameState(
   const handleUndo = (): void => {
     if (boardHistory.value.length === 0) return
 
-    const previousState = boardHistory.value.pop()
-    if (!previousState) return
+    // AI 对战中，悔棋撤回两步（撤消 AI 的走棋 + 玩家的上一步）
+    if (gameMode.value === 'ai') {
+      // 取消可能正在等待的 AI 走棋
+      cancelAIMove()
 
-    board.value = previousState.board
-    currentTurn.value = previousState.currentTurn
-    lastMove.value = previousState.lastMove
-    halfmoveClock.value = previousState.halfmoveClock
-    whiteTimeSeconds.value = previousState.whiteTimeSeconds
-    blackTimeSeconds.value = previousState.blackTimeSeconds
-    timeoutWinner.value = previousState.timeoutWinner
+      // 撤回 AI 的走棋（如果最后一步是 AI 走的）
+      if (boardHistory.value.length > 0) {
+        const lastTurnBefore = boardHistory.value[boardHistory.value.length - 1]!.currentTurn
+        const aiColor = playerColor.value === 'white' ? 'black' : 'white'
+        // 如果当前轮次是玩家，说明最后一步是 AI 走的，先撤一步
+        if (currentTurn.value === playerColor.value && lastTurnBefore === aiColor) {
+          restoreHistoryState(boardHistory.value.pop()!)
+          moveHistory.value.pop()
+          if (positionHistory.value.length > 1) {
+            positionHistory.value.pop()
+          }
+        }
+      }
 
-    if (hasGameStarted.value) {
-      startClock(previousState.currentTurn)
+      // 再撤回一步（玩家的上一步）
+      if (boardHistory.value.length > 0) {
+        restoreHistoryState(boardHistory.value.pop()!)
+        moveHistory.value.pop()
+        if (positionHistory.value.length > 1) {
+          positionHistory.value.pop()
+        }
+      }
     } else {
-      stopClock()
-    }
+      const previousState = boardHistory.value.pop()
+      if (!previousState) return
 
-    moveHistory.value.pop()
-
-    if (positionHistory.value.length > 1) {
-      positionHistory.value.pop()
+      restoreHistoryState(previousState)
+      moveHistory.value.pop()
+      if (positionHistory.value.length > 1) {
+        positionHistory.value.pop()
+      }
     }
 
     selectedSquare.value = null
@@ -747,22 +801,40 @@ export function useGameState(
     promotionStyle.value = {}
   }
 
+  const restoreHistoryState = (state: NonNullable<typeof boardHistory.value[number]>) => {
+    board.value = state.board
+    currentTurn.value = state.currentTurn
+    lastMove.value = state.lastMove
+    halfmoveClock.value = state.halfmoveClock
+    whiteTimeSeconds.value = state.whiteTimeSeconds
+    blackTimeSeconds.value = state.blackTimeSeconds
+    timeoutWinner.value = state.timeoutWinner
+    hasGameStarted.value = state.hasGameStarted
+
+    if (state.hasGameStarted) {
+      startClock(state.currentTurn)
+    } else {
+      stopClock()
+    }
+  }
+
   const handleResign = (): void => {
     stopClock()
+    cancelAIMove()
     hasResigned.value = currentTurn.value
     playSound(currentTurn.value === playerColor.value ? 'defeat' : 'victory')
   }
 
   const handleDrawOffer = (): void => {
     stopClock()
+    cancelAIMove()
     isAgreedDraw.value = true
     playSound('draw')
   }
 
   const handleRestart = (): void => {
-    // 重赛：沿用上次设置，黑白调换
+    cancelAIMove()
     if (!lastSetupConfig.value) {
-      // 没有上次配置，回退到显示设置
       showSetup.value = true
       return
     }
@@ -776,7 +848,8 @@ export function useGameState(
   }
 
   const handleBackToSetup = (): void => {
-    // 回到对局设置：直接显示设置画面，不清除棋盘状态
+    cancelAIMove()
+    stopClock()
     showSetup.value = true
   }
 
@@ -788,8 +861,17 @@ export function useGameState(
       config.boardMode === 'custom' ? parseFenToBoard(config.fen) : createInitialBoard()
     if (!parsedBoard) return
 
+    cancelAIMove()
+
     // 保存本次配置，供重赛使用
     lastSetupConfig.value = config
+
+    // 设置 AI 参数
+    gameMode.value = config.gameMode
+    if (config.gameMode === 'ai') {
+      aiDifficulty.value = config.difficulty as AIDifficulty
+      aiStyle.value = config.aiStyle
+    }
 
     isClockEnabled.value = config.timeMinutes > 0
 
@@ -820,6 +902,172 @@ export function useGameState(
     promotionStyle.value = {}
     positionHistory.value = [getPositionKey(board.value, currentTurn.value, lastMove.value)]
     showSetup.value = false
+
+    // ---- 黑方时 AI 先下 ----
+    // 如果玩家执黑方，先手方是黑方，即当前轮次轮到黑方（玩家）
+    // 但棋盘已经翻转了（isFlipped = true），所以应该等玩家走第一步
+    // 实际上：starterColor 就是当前轮次。白方先手时 currentTurn = 'white'
+    // 黑方先手时 currentTurn = 'black'，此时玩家执黑先走
+    // 不，重新检查逻辑：
+    // getStarterColor('black') => 'black', playerColor = 'black', currentTurn = 'black'
+    // 这是黑方先手，玩家执黑，黑棋是玩家。
+    // getStarterColor('white') => 'white', playerColor = 'white', currentTurn = 'white'
+    // 这是白方先手，玩家执白，白棋是玩家。
+    // 问题：用户说的"执棋方为黑棋时让AI先下"是什么意思？
+    // 用户想执黑棋，让 AI 执白棋先走。即用户选 black，AI 执白先走。
+    // 当前代码：选 black => playerColor = black, currentTurn = black (玩家先走)
+    // 需要改为：选 black => playerColor = black, 但白方(currentTurn=white)先走
+    // 同时需要 isFlipped = true
+    // 修改：如果 gameMode === 'ai'，starter === 'black' 或 'white' 决定了谁先手
+    // 黑方 = AI 执白先手，白方 = 玩家执白先手
+    if (config.gameMode === 'ai') {
+      // 人机对战：用 starter 来确定玩家的颜色
+      // 如果玩家选 black，则 AI 执白（先手），棋盘翻转
+      // 如果玩家选 white，则玩家执白（先手），棋盘不翻转（除非先手是黑色）
+      const resolvedPlayerColor = getStarterColor(config.starter)
+
+      // 在 AI 模式中，如果 starter 是固定值：
+      if (config.starter === 'black') {
+        // 玩家执黑，AI 执白先手
+        playerColor.value = 'black'
+        isFlipped.value = true
+        currentTurn.value = 'white' // AI 先下
+      } else if (config.starter === 'white') {
+        // 玩家执白，玩家先手
+        playerColor.value = 'white'
+        isFlipped.value = false
+        currentTurn.value = 'white'
+      } else {
+        // 随机
+        playerColor.value = resolvedPlayerColor
+        isFlipped.value = resolvedPlayerColor === 'black'
+        // 随机模式保持先手与玩家颜色一致（白方先手是 convention）
+        currentTurn.value = 'white' // 总是白方先手
+        if (resolvedPlayerColor === 'black') {
+          currentTurn.value = 'white' // AI 先下
+        }
+      }
+    }
+
+    // ---- AI 先走的触发 ----
+    void nextTick(() => {
+      checkAndTriggerAI()
+    })
+  }
+
+  // ============================================================
+  // AI 走棋调度
+  // ============================================================
+  const executeAIMoveOnBoard = (aiMove: AIDetailedMove) => {
+    const from = { row: aiMove.fromRow, col: aiMove.fromCol }
+    const piece = board.value[aiMove.fromRow]?.[aiMove.fromCol]
+    if (!piece) return
+
+    const isPawnMove = piece.type === 'pawn'
+    const targetPiece = board.value[aiMove.toRow]?.[aiMove.toCol]
+    const isCapture = targetPiece !== null || aiMove.special === 'enPassant'
+
+    // 兵升变：AI 自动选择
+    if (isPawnMove && (aiMove.toRow === 0 || aiMove.toRow === 7)) {
+      const promoChoice = getPromotionChoice(board.value, aiMove.toRow, aiMove.toCol, piece.color)
+      const newType = promoChoice as Piece['type']
+      const nextBoard = cloneBoard(board.value)
+      nextBoard[aiMove.toRow]![aiMove.toCol] = {
+        type: newType,
+        color: piece.color,
+        hasMoved: true,
+      }
+      nextBoard[aiMove.fromRow]![aiMove.fromCol] = null
+
+      const nextTurn: Color = piece.color === 'white' ? 'black' : 'white'
+      let checkStatus: 'check' | 'checkmate' | undefined = undefined
+      if (isCheckmate(nextBoard, nextTurn)) {
+        checkStatus = 'checkmate'
+      } else if (isKingInCheck(nextBoard, nextTurn)) {
+        checkStatus = 'check'
+      }
+
+      const notation = generateMoveNotation(
+        board.value,
+        aiMove.fromRow,
+        aiMove.fromCol,
+        aiMove.toRow,
+        aiMove.toCol,
+        undefined,
+        newType,
+        checkStatus,
+      )
+      moveHistory.value.push(notation)
+      pushBoardHistory()
+
+      board.value = nextBoard
+      lastMove.value = { from: { row: aiMove.fromRow, col: aiMove.fromCol }, to: { row: aiMove.toRow, col: aiMove.toCol } }
+      halfmoveClock.value = 0
+      positionHistory.value.push(getPositionKey(nextBoard, nextTurn, lastMove.value))
+      currentTurn.value = nextTurn
+
+      applyClockAfterMove(piece.color, nextTurn, nextBoard)
+      triggerGameStateAudio(isCapture, nextTurn, nextBoard)
+    } else {
+      const move: Move = {
+        row: aiMove.toRow,
+        col: aiMove.toCol,
+        special: aiMove.special,
+        rookFrom: aiMove.rookFrom,
+        rookTo: aiMove.rookTo,
+      }
+      const nextBoard = cloneBoard(board.value)
+      executeMove(nextBoard, move, from, isPawnMove, isCapture)
+    }
+  }
+
+  const scheduleAIMove = () => {
+    if (isGameOver.value) return
+    if (gameMode.value !== 'ai') return
+
+    const aiColor = playerColor.value === 'white' ? 'black' : 'white'
+    if (currentTurn.value !== aiColor) return
+
+    cancelAIMove()
+    isAIThinking.value = true
+
+    // 使用 setTimeout 让 UI 先更新，避免阻塞渲染
+    aiMoveTimer = window.setTimeout(() => {
+      aiMoveTimer = null
+      if (isGameOver.value) {
+        isAIThinking.value = false
+        return
+      }
+
+      if (currentTurn.value !== aiColor) {
+        isAIThinking.value = false
+        return
+      }
+
+      const bestMove = getBestAIMove(
+        board.value,
+        aiColor,
+        aiDifficulty.value,
+        aiStyle.value,
+        lastMove.value,
+      )
+
+      isAIThinking.value = false
+
+      if (bestMove) {
+        executeAIMoveOnBoard(bestMove)
+      }
+    }, 300) // 300ms 延迟让 UI 看起来更自然
+  }
+
+  const checkAndTriggerAI = () => {
+    if (gameMode.value !== 'ai') return
+    if (isGameOver.value) return
+
+    const aiColor = playerColor.value === 'white' ? 'black' : 'white'
+    if (currentTurn.value === aiColor) {
+      scheduleAIMove()
+    }
   }
 
   const handleGameSetupStart = (config: GameSetupConfig) => {
@@ -834,6 +1082,7 @@ export function useGameState(
   // ---- 清理 ----
   onUnmounted(() => {
     stopClock()
+    cancelAIMove()
   })
 
   // ============================================================
@@ -844,6 +1093,8 @@ export function useGameState(
     showSetup,
     playerColor,
     isClockEnabled,
+    gameMode,
+    isAIThinking,
 
     // 核心状态
     board,
@@ -880,6 +1131,7 @@ export function useGameState(
     gameStatusMessage,
     isGameOver,
     canInteract,
+    isAITurn,
 
     // 走棋
     possibleMoves,
