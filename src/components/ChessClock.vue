@@ -62,6 +62,7 @@ const formattedBlackTime = computed(() => formatTime(props.blackTimeSeconds))
     display: flex;
     justify-content: center;
     align-items: center;
+    padding: 6px;
     border: 2px solid #adafbc;
     box-shadow: 2px 2px 0 #909294;
     font-family: 'Unifont', monospace;

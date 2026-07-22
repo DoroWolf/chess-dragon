@@ -943,6 +943,17 @@ export function useGameState(
     selectedSquare.value = null
     promotionPending.value = null
     promotionStyle.value = {}
+
+    // 悔棋后若游戏未结束，确保"已开始"状态和棋钟保持运行
+    // （解决悔棋到初始状态时 hasGameStarted 被恢复为 false 的问题）
+    if (!isGameOver.value && boardHistory.value.length >= 0) {
+      if (!hasGameStarted.value) {
+        hasGameStarted.value = true
+      }
+      if (!clockStarted.value && isClockEnabled.value) {
+        startClock(currentTurn.value)
+      }
+    }
   }
 
   const restoreHistoryState = (state: NonNullable<typeof boardHistory.value[number]>) => {
@@ -1002,7 +1013,7 @@ export function useGameState(
   // ============================================================
   const applyGameSetup = (config: GameSetupConfig) => {
     const parsedBoard =
-      config.boardMode === 'custom' ? parseFenToBoard(config.fen) : createInitialBoard()
+      config.boardMode === 'standard' ? createInitialBoard() : parseFenToBoard(config.fen)
     if (!parsedBoard) return
 
     cancelAIMove()

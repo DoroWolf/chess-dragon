@@ -23,13 +23,23 @@
                         <span>标准棋盘</span>
                     </label>
                     <label class="option-card">
+                        <input v-model="boardMode" type="radio" value="chess960" />
+                        <span>Chess960</span>
+                    </label>
+                    <label class="option-card">
                         <input v-model="boardMode" type="radio" value="custom" />
                         <span>自定义棋盘</span>
                     </label>
                 </div>
 
+                <div v-if="boardMode === 'chess960'" class="chess960-row">
+                    <span class="chess960-label">#{{ chess960Id }}</span>
+                    <button type="button" class="btn" @click="generateChess960">重新生成</button>
+                </div>
+
                 <input v-if="boardMode === 'custom'" v-model="fenInput" type="text" class="fen-input"
                     placeholder="在此处粘贴 FEN 文本" />
+                <p v-if="boardMode === 'custom' && fenInput.trim() && !isFenValid" class="fen-hint">无效的 FEN</p>
             </div>
 
             <div class="setup-section">
@@ -82,7 +92,7 @@
                 </div>
             </div>
 
-            <div class="setup-section">
+            <div v-if="gameMode === 'ai'" class="setup-section">
                 <h3>执棋方</h3>
                 <div class="option-group">
                     <label class="option-card">
@@ -103,10 +113,10 @@
             <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
             <div class="setup-actions">
-                <button type="button" class="btn btn-secondary" @click="screen = 'home'">
+                <button type="button" class="btn bottom-btn" @click="screen = 'home'">
                     返回
                 </button>
-                <button type="button" class="btn btn-primary start-btn" @click="handleStart">
+                <button type="button" class="btn bottom-btn btn-primary start-btn" :disabled="!canStart" @click="handleStart">
                     开始对局
                 </button>
             </div>
@@ -115,12 +125,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue' // 1. 引入 watch
 
 export type AIStyle = 'balanced' | 'aggressive' | 'defensive' | 'unpredictable'
 
 export interface GameSetupConfig {
-    boardMode: 'standard' | 'custom'
+    boardMode: 'standard' | 'custom' | 'chess960'
     fen: string
     timeMinutes: number
     incrementSeconds: number
@@ -140,8 +150,9 @@ const gameMode = ref<'ai' | 'human' | 'remote'>('ai')
 const difficulty = ref(3)
 const aiStyle = ref<AIStyle>('balanced')
 
-const boardMode = ref<'standard' | 'custom'>('standard')
+const boardMode = ref<'standard' | 'custom' | 'chess960'>('standard')
 const fenInput = ref('')
+const chess960Id = ref(518)
 const timeMinutes = ref(10)
 const incrementSeconds = ref(0)
 const starter = ref<'black' | 'random' | 'white'>('white')
@@ -156,26 +167,127 @@ const handleRemote = () => {
     emit('remote')
 }
 
+// ============================================================
+// Chess960 生成
+// ============================================================
+const generateChess960 = () => {
+    chess960Id.value = Math.floor(Math.random() * 960) + 1
+}
+
+// 2. 监听 boardMode 切换，只要选了 chess960 就会刷新 id
+watch(boardMode, (newMode) => {
+    if (newMode === 'chess960') {
+        generateChess960()
+    }
+})
+
+// ============================================================
+// FEN 验证
+// ============================================================
+const validateFen = (fen: string): boolean => {
+    const trimmed = fen.trim()
+    if (!trimmed) return false
+
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2) return false
+
+    const boardPart = parts[0]
+    if (!boardPart) return false
+
+    const rows = boardPart.split('/')
+    if (rows.length !== 8) return false
+
+    for (const row of rows) {
+        let colCount = 0
+        for (const char of row) {
+            if (/\d/.test(char)) {
+                colCount += Number.parseInt(char, 10)
+            } else if (/[prnbqkPRNBQK]/.test(char)) {
+                colCount += 1
+            } else {
+                return false
+            }
+        }
+        if (colCount !== 8) return false
+    }
+
+    const turnPart = parts[1]
+    if (turnPart !== 'w' && turnPart !== 'b') return false
+
+    return true
+}
+
+const isFenValid = computed(() => {
+    if (boardMode.value !== 'custom') return true
+    const trimmed = fenInput.value.trim()
+    if (!trimmed) return true
+    return validateFen(trimmed)
+})
+
+const buildChess960Fen = (): string => {
+    const pieces = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'] as const
+
+    const shuffleArray = <T,>(arr: T[]): T[] => {
+        const a = [...arr]
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1))
+            const tmp = a[i]!
+            a[i] = a[j]!
+            a[j] = tmp
+        }
+        return a
+    }
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+        const shuffled = shuffleArray([...pieces])
+        const bishopIndices = shuffled.reduce<number[]>((acc, p, i) => {
+            if (p === 'b') acc.push(i)
+            return acc
+        }, [])
+        const b1Color = bishopIndices[0]! % 2
+        const b2Color = bishopIndices[1]! % 2
+        if (b1Color === b2Color) continue
+
+        const kingIdx = shuffled.indexOf('k')
+        const rookIndices = shuffled.reduce<number[]>((acc, p, i) => {
+            if (p === 'r') acc.push(i)
+            return acc
+        }, [])
+        if (kingIdx < rookIndices[0]! || kingIdx > rookIndices[1]!) continue
+
+        const backRankLower = shuffled.join('')
+        const backRankUpper = backRankLower.toUpperCase()
+        const emptyRow = '8'
+        return `${backRankLower}/pppppppp/${emptyRow}/${emptyRow}/${emptyRow}/${emptyRow}/PPPPPPPP/${backRankUpper} w KQkq - 0 1`
+    }
+}
+
+// ============================================================
+// 是否可以开始对局
+// ============================================================
+const canStart = computed(() => {
+    if (boardMode.value === 'custom') {
+        const trimmed = fenInput.value.trim()
+        if (!trimmed) return false
+        return isFenValid.value
+    }
+    return true
+})
+
 const handleStart = () => {
     errorMessage.value = ''
 
+    let finalFen = ''
     if (boardMode.value === 'custom') {
-        const trimmedFen = fenInput.value.trim()
-        if (!trimmedFen) {
-            errorMessage.value = '请输入自定义棋盘的 FEN。'
-            return
-        }
-
-        const fenParts = trimmedFen.split(/\s+/)
-        if (fenParts.length < 2) {
-            errorMessage.value = 'FEN 至少需要包含棋盘布局和先手方信息。'
-            return
-        }
+        finalFen = fenInput.value.trim()
+    } else if (boardMode.value === 'chess960') {
+        finalFen = buildChess960Fen()
     }
 
     emit('start', {
         boardMode: boardMode.value,
-        fen: fenInput.value.trim(),
+        fen: finalFen,
         timeMinutes: timeMinutes.value,
         incrementSeconds: timeMinutes.value === 0 ? 0 : incrementSeconds.value,
         starter: starter.value,
@@ -218,7 +330,6 @@ const handleStart = () => {
     height: auto;
     object-fit: contain;
 }
-
 
 .home-buttons {
     display: flex;
@@ -317,6 +428,24 @@ const handleStart = () => {
     border: 1px solid #d0d0d0;
 }
 
+.fen-hint {
+    margin: 4px 0 0;
+    color: #c33;
+    font-size: 0.85rem;
+}
+
+.chess960-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.chess960-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
 .slider-row {
     display: grid;
     grid-template-columns: 120px 1fr auto;
@@ -334,21 +463,6 @@ const handleStart = () => {
 .setup-actions {
     display: flex;
     gap: 12px;
-}
-
-.btn-secondary {
-    flex: 0 0 auto;
-    padding: 10px 20px;
-    border: 1px solid #888;
-    background: #fff;
-    color: #555;
-    font-size: 0.95rem;
-    cursor: pointer;
-    transition: background-color 0.15s;
-}
-
-.btn-secondary:hover {
-    background: #f0f0f0;
 }
 
 .start-btn {
