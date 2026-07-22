@@ -1181,6 +1181,19 @@ export function useGameState(
         return
       }
 
+      // ---- AI 主动宣告和棋：3 次重复局面 或 50 步规则 ----
+      const currentKey = getPositionKey(board.value, currentTurn.value, lastMove.value)
+      const positionRepeatCount = positionHistory.value.filter((key) => key === currentKey).length
+
+      if (positionRepeatCount >= 3 || halfmoveClock.value >= 100) {
+        isAIThinking.value = false
+        // AI 宣告和棋
+        stopClock()
+        isAgreedDraw.value = true
+        playSound('draw')
+        return
+      }
+
       const bestMove = getBestAIMove(
         board.value,
         aiColor,
