@@ -852,7 +852,7 @@ export function useGameState(
       // A. 处于 Premove 模式下的拖拽释放
       if (canPremove.value) {
         if (canPremoveTo(to.row, to.col)) {
-          // 拖拽到合法格：成功设置 premove！
+          // 拖拽到合法格：成功设置 premove
           premove.value = {
             from: { row: from.row, col: from.col },
             to: { row: to.row, col: to.col },
@@ -861,7 +861,7 @@ export function useGameState(
           // 拖拽到非法格：清除 premove
           premove.value = null
         }
-        selectedSquare.value = null // 释放拖拽后清除选中高亮
+        selectedSquare.value = null
         return
       }
 
@@ -991,7 +991,7 @@ export function useGameState(
     applyGameSetup(swappedConfig)
   }
 
-  const handleBackToSetup = (): void => {
+  const handleBackToHome = (): void => {
     cancelAIMove()
     stopClock()
     showSetup.value = true
@@ -1297,7 +1297,7 @@ export function useGameState(
     handleResign,
     handleDrawOffer,
     handleRestart,
-    handleBackToSetup,
+    handleBackToHome,
     handleGameSetupStart,
 
     // 工具

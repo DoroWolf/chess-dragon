@@ -22,8 +22,8 @@
     </div>
 
     <div v-if="isGameOver" class="button-group">
-      <button type="button" class="btn settings-btn" @click="$emit('back-to-setup')">
-        对局设置
+      <button type="button" class="btn settings-btn" @click="$emit('back-to-home')">
+        返回
       </button>
       <button type="button" class="btn btn-primary" @click="$emit('restart')">
         重赛
@@ -120,7 +120,7 @@ const emit = defineEmits<{
   draw: []
   resign: []
   restart: []
-  'back-to-setup': []
+  'back-to-home': []
   'toggle-flip': []
   'update:isSoundEnabled': [value: boolean]
   'update:coordinateLabelMode': [value: 'off' | 'inside' | 'outside']

@@ -34,7 +34,7 @@
       :game-mode="gameMode"
       v-model:is-sound-enabled="isSoundEnabled" v-model:coordinate-label-mode="coordinateLabelMode"
       @toggle-flip="isFlipped = !isFlipped" :has-game-started="hasGameStarted" @undo="handleUndo"
-      @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" @back-to-setup="handleBackToSetup" />
+      @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" @back-to-home="handleBackToHome" />
 
     <!-- 右上角固定设置按钮 -->
     <button type="button" class="settings-fab" @click="showSettingsModal = true" title="设置">
@@ -115,7 +115,7 @@ const {
   handleResign,
   handleDrawOffer,
   handleRestart,
-  handleBackToSetup,
+  handleBackToHome,
   handleGameSetupStart,
   cancelPromotion,
   applyPromotion,
