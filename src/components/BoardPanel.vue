@@ -197,7 +197,6 @@ watch(pieceScale, (val) => {
   justify-content: center;
   align-items: center;
   box-sizing: border-box;
-  box-shadow: 2px 2px 0 #909294;
 }
 
 .board-frame {
@@ -299,6 +298,7 @@ watch(pieceScale, (val) => {
 .coordinate-label {
   position: absolute;
   font-size: 0.75rem;
+  font-family: 'Unifont', monospace;
   line-height: 1;
   font-weight: bold;
   pointer-events: none;
