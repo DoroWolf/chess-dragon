@@ -13,7 +13,7 @@
 ---
 
 <p align="center">
-  <img src="public/screenshot.jpg" alt="Screenshot" width="700"/>
+  <img src="screenshot.jpg" alt="Screenshot" width="700"/>
 </p>
 
 ## 特性
