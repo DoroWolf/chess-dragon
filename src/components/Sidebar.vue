@@ -398,7 +398,6 @@ const materialDiffText = computed(() => {
   padding: 1rem;
   width: 100%;
   max-width: 300px;
-  font-family: 'Unifont', system-ui, -apple-system, sans-serif;
   color: #222;
 }
 

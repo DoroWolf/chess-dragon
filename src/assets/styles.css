@@ -10,7 +10,7 @@ body, html {
 
 @font-face {
   font-family: 'Unifont';
-  src: url('./assets/fonts/unifont.otf');
+  src: url('unifont.otf');
   font-weight: normal;
   font-style: normal;
   font-display: swap;

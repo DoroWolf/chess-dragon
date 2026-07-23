@@ -298,7 +298,6 @@ watch(pieceScale, (val) => {
 
 .coordinate-label {
   position: absolute;
-  font-family: 'Unifont', monospace;
   font-size: 0.75rem;
   line-height: 1;
   font-weight: bold;
