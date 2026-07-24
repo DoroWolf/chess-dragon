@@ -63,7 +63,7 @@ const handleCoordinateChange = (e: Event) => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: var(--color-overlay-heavy);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -71,7 +71,7 @@ const handleCoordinateChange = (e: Event) => {
 }
 
 .settings-dialog {
-  background: white;
+  background: var(--color-surface);
   padding: 1.5rem;
   max-width: 280px;
   width: 90%;
@@ -128,7 +128,7 @@ const handleCoordinateChange = (e: Event) => {
   cursor: pointer;
   font-size: 0.75rem;
   padding: 2px 8px;
-  border: 2px solid #212529;
-  background-color: #fff;
+  border: 2px solid var(--color-surface-border);
+  background-color: var(--color-surface);
 }
 </style>

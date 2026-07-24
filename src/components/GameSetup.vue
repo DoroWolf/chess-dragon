@@ -7,9 +7,9 @@
                 <img :src="titleImg" alt="Chess Dragon" class="title-img" />
             </div>
             <div class="home-buttons">
-                <button class="btn btn-home" @click="startSetup('ai')">人机对战</button>
-                <button class="btn btn-home" @click="startSetup('human')">双人对战</button>
-                <button class="btn btn-home btn-home--secondary" @click="handleRemote">远程对战</button>
+                <button class="btn btn-home" @click="startSetup('ai')">人机对局</button>
+                <button class="btn btn-home" @click="startSetup('human')">双人对局</button>
+                <button class="btn btn-home btn-home--secondary" @click="handleRemote">远程对局</button>
             </div>
         </section>
 
@@ -52,7 +52,7 @@
                 </label>
             </div>
 
-            <!-- 强度设置（仅人机对战） -->
+            <!-- 强度设置（仅人机对局） -->
             <div v-if="gameMode === 'ai'" class="setup-section">
                 <h3>强度</h3>
                 <div class="option-group">
@@ -64,7 +64,7 @@
                 </div>
             </div>
 
-            <!-- AI 风格设置（仅人机对战） -->
+            <!-- AI 风格设置（仅人机对局） -->
             <div v-if="gameMode === 'ai'" class="setup-section">
                 <h3>AI 风格</h3>
                 <div class="option-group">
@@ -303,7 +303,7 @@ const handleStart = () => {
     justify-content: center;
     align-items: center;
     padding: 20px;
-    background-color: #f0f0f0;
+    background-color: var(--color-page-bg);
 }
 
 .home-panel {
@@ -341,26 +341,26 @@ const handleStart = () => {
     padding: 14px 0;
     font-size: 1.15rem;
     font-weight: 600;
-    border: 2px solid #212529;
-    background: #fff;
-    color: #212529;
+    border: 2px solid var(--color-surface-border);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
     cursor: pointer;
     transition: background-color 0.15s, color 0.15s;
 }
 
 .btn-home:hover {
-    background: #212529;
-    color: #fff;
+    background: var(--color-surface-border);
+    color: var(--color-text-on-primary);
 }
 
 .btn-home--secondary {
-    border-color: #888;
-    color: #666;
+    border-color: var(--color-border-secondary);
+    color: var(--color-text-muted);
 }
 
 .btn-home--secondary:hover {
-    background: #888;
-    color: #fff;
+    background: var(--color-border-secondary);
+    color: var(--color-text-on-primary);
 }
 
 .setup-panel {
@@ -368,8 +368,8 @@ const handleStart = () => {
     max-height: 90vh;
     overflow: auto;
     padding: 20px;
-    background: #fff;
-    box-shadow: 2px 2px 0 #909294;
+    background: var(--color-surface);
+    box-shadow: 2px 2px 0 var(--color-surface-shadow);
 }
 
 .title {
@@ -399,7 +399,7 @@ const handleStart = () => {
     align-items: center;
     gap: 6px;
     padding: 8px 10px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--color-border-light);
     cursor: pointer;
 }
 
@@ -413,9 +413,9 @@ const handleStart = () => {
 }
 
 .difficulty-card.active {
-    border-color: #212529;
-    background: #212529;
-    color: #fff;
+    border-color: var(--color-surface-border);
+    background: var(--color-surface-border);
+    color: var(--color-text-on-primary);
 }
 
 .fen-input {
@@ -423,12 +423,12 @@ const handleStart = () => {
     box-sizing: border-box;
     margin-top: 8px;
     padding: 8px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--color-border-light);
 }
 
 .fen-hint {
     margin: 4px 0 0;
-    color: #c33;
+    color: var(--color-error);
     font-size: 0.85rem;
 }
 
@@ -442,7 +442,7 @@ const handleStart = () => {
 
 .error-message {
     margin: 0 0 12px;
-    color: #c33;
+    color: var(--color-error);
     font-size: 0.95rem;
 }
 

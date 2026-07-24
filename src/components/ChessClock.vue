@@ -63,26 +63,26 @@ const formattedBlackTime = computed(() => formatTime(props.blackTimeSeconds))
     justify-content: center;
     align-items: center;
     padding: 6px;
-    border: 2px solid #adafbc;
-    box-shadow: 2px 2px 0 #909294;
+    border: 2px solid var(--color-border-medium);
+    box-shadow: 2px 2px 0 var(--color-surface-shadow);
     transition: all 0.2s ease;
 }
 
 /* 白色方容器 */
 .clock-side.side-white {
-    background-color: #F3F9FC;
-    color: #484A4B;
+    background-color: var(--color-board-light);
+    color: var(--color-board-dark);
 }
 
 /* 黑色方容器 */
 .clock-side.side-black {
-    background-color: #484A4B;
-    color: #F3F9FC;
+    background-color: var(--color-board-dark);
+    color: var(--color-board-light);
 }
 
 /* 激活状态的高亮指示 */
 .clock-side.is-active {
-    border-color: #B79227;
+    border-color: var(--color-highlight-gold);
 }
 
 .clock-time {

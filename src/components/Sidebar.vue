@@ -405,7 +405,7 @@ const materialDiffText = computed(() => {
   padding: 1rem;
   width: 100%;
   max-width: 300px;
-  color: #222;
+  color: var(--color-text-primary);
 }
 
 .game-status {
@@ -416,23 +416,23 @@ const materialDiffText = computed(() => {
 }
 
 .game-status.turn-black {
-  background-color: #484A4B;
-  color: #F3F9FC;
+  background-color: var(--color-board-dark);
+  color: var(--color-board-light);
 }
 
 .game-status.turn-black .status-message,
 .game-status.turn-black .current-turn {
-  color: #F3F9FC;
+  color: var(--color-board-light);
 }
 
 .game-status.turn-white {
-  background-color: #F3F9FC;
-  color: #484A4B;
+  background-color: var(--color-board-light);
+  color: var(--color-board-dark);
 }
 
 .game-status.turn-white .status-message,
 .game-status.turn-white .current-turn {
-  color: #484A4B;
+  color: var(--color-board-dark);
 }
 
 .status-message,
@@ -477,7 +477,7 @@ const materialDiffText = computed(() => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: var(--color-overlay-heavy);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -485,7 +485,7 @@ const materialDiffText = computed(() => {
 }
 
 .dialog-box {
-  background: white;
+  background: var(--color-surface);
   padding: 1.5rem;
   max-width: 280px;
   width: 90%;

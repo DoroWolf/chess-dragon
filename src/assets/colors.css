@@ -1,0 +1,51 @@
+/* ============================================================
+ * ChessDragon 设计令牌 - 颜色系统
+ * 
+ * 所有颜色统一使用 CSS 自定义属性，方便未来添加暗色模式。
+ * 暗色模式只需复制 :root 块到 [data-theme="dark"] 选择器并调整值即可。
+ * ============================================================ */
+
+:root {
+  /* ===== 页面背景 ===== */
+  --color-page-bg: #f0f0f0;
+
+  /* ===== 表面 / 卡片 ===== */
+  --color-surface: #ffffff;
+  --color-surface-border: #212529;
+  --color-surface-shadow: #909294;
+
+  /* ===== 文本 ===== */
+  --color-text-primary: #212529;
+  --color-text-secondary: #333333;
+  --color-text-muted: #666666;
+  --color-text-on-primary: #ffffff;
+  --color-text-inverse: #F3F9FC;
+
+  /* ===== 棋盘 ===== */
+  --color-board-light: #F3F9FC;
+  --color-board-dark: #484A4B;
+
+  /* ===== 按钮 ===== */
+  --color-btn-bg: #e7e7e7;
+  --color-btn-primary: #209cee;
+  --color-btn-danger: #e76e55;
+  --color-btn-warning: #deca14;
+  --color-btn-success: #1cb221;
+
+  /* ===== 边框 ===== */
+  --color-border-light: #d0d0d0;
+  --color-border-medium: #adafbc;
+  --color-border-secondary: #888888;
+
+  /* ===== 强调 / 焦点 ===== */
+  --color-focus-ring: #ffd33d;
+  --color-highlight-gold: #B79227;
+
+  /* ===== 错误 ===== */
+  --color-error: #cc3333;
+
+  /* ===== 遮罩 ===== */
+  --color-overlay-hover: rgba(0, 0, 0, 0.08);
+  --color-overlay-medium: rgba(0, 0, 0, 0.45);
+  --color-overlay-heavy: rgba(0, 0, 0, 0.5);
+}

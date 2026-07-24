@@ -136,9 +136,9 @@ const {
   stopClock,
 } = game
 
-// ---- 远程对战 ----
+// ---- 远程对局 ----
 const handleRemoteGame = () => {
-  // TODO: 后续实现远程对战功能
+  // TODO: 后续实现远程对局功能
   showSetup.value = true
 }
 
@@ -158,7 +158,7 @@ onUnmounted(() => {
   box-sizing: border-box;
   padding: 20px;
   font-family: 'Unifont', system-ui, -apple-system, sans-serif;
-  color: #222;
+  color: var(--color-text-primary);
   gap: 1rem;
   flex-wrap: wrap;
   cursor: auto;
@@ -186,7 +186,7 @@ onUnmounted(() => {
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: #212529;
+  color: var(--color-text-primary);
   font-size: 1.4rem;
   cursor: pointer;
   display: inline-flex;
@@ -202,7 +202,7 @@ onUnmounted(() => {
 }
 
 .fab-btn:focus-visible {
-  outline: 2px solid #ffd33d;
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 

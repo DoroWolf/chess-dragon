@@ -247,7 +247,7 @@ watch(pieceScale, (val) => {
 }
 
 .board-square:focus-visible {
-  outline: 2px solid #ffd33d;
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: -2px;
   z-index: 10;
 }
@@ -332,7 +332,7 @@ watch(pieceScale, (val) => {
   position: absolute;
   transform: translateX(-50%);
   font-size: 0.85rem;
-  color: #333;
+  color: var(--color-text-secondary);
   text-align: center;
 }
 
@@ -340,7 +340,7 @@ watch(pieceScale, (val) => {
   position: absolute;
   transform: translateY(-50%);
   font-size: 0.85rem;
-  color: #333;
+  color: var(--color-text-secondary);
   text-align: center;
   width: 100%;
 }
@@ -356,17 +356,17 @@ watch(pieceScale, (val) => {
 }
 
 .coordinate-label.text-black {
-  color: #484A4B;
+  color: var(--color-board-dark);
 }
 
 .coordinate-label.text-white {
-  color: #F3F9FC;
+  color: var(--color-board-light);
 }
 
 .promotion-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--color-overlay-medium);
   z-index: 50;
 }
 </style>

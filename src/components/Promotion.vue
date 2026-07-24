@@ -46,7 +46,7 @@ const computedStyle = computed(() => ({
   flex-direction: column;
   justify-content: flex-start;
   align-items: stretch;
-  background: #ffffff;
+  background: var(--color-surface);
   z-index: 60;
   overflow: hidden;
 }
@@ -65,7 +65,7 @@ const computedStyle = computed(() => ({
 }
 
 .promote-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--color-overlay-hover);
 }
 
 .promote-btn img {
