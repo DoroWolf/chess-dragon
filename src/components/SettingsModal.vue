@@ -114,11 +114,6 @@ const handleCoordinateChange = (e: Event) => {
   font-weight: bold;
 }
 
-.flip-btn {
-  font-size: 0.7rem;
-  padding: 2px 8px;
-}
-
 .custom-checkbox {
   width: 1rem;
   height: 1rem;

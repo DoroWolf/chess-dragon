@@ -39,10 +39,15 @@
       @toggle-flip="isFlipped = !isFlipped" :has-game-started="hasGameStarted" @undo="handleUndo"
       @draw="handleDrawOffer" @resign="handleResign" @restart="handleRestart" @back-to-home="handleBackToHome" />
 
-    <!-- 右上角固定设置按钮 -->
-    <button type="button" class="settings-fab" @click="showSettingsModal = true" title="设置">
-      ⚙
-    </button>
+    <!-- 右上角固定按钮组 -->
+    <div class="top-right-fabs">
+      <a href="https://github.com/DoroWolf/ChessDragon" target="_blank" rel="noopener" class="fab-btn" title="GitHub">
+        <span class="fab-icon" v-html="githubSvg"></span>
+      </a>
+      <button type="button" class="fab-btn" @click="showSettingsModal = true" title="设置">
+        <span class="fab-icon" v-html="settingSvg"></span>
+      </button>
+    </div>
 
     <!-- 设置弹窗 Modal -->
     <SettingsModal :visible="showSettingsModal" :is-sound-enabled="isSoundEnabled"
@@ -61,6 +66,8 @@ import BoardPanel from './components/BoardPanel.vue'
 import { useSettings } from './composables/useSettings'
 import { useBoardDisplay } from './composables/useBoardDisplay'
 import { useGameState } from './composables/useGameState'
+import settingSvg from './assets/icon/setting.svg?raw'
+import githubSvg from './assets/icon/github.svg?raw'
 
 // ---- 设置持久化 ----
 const { isSoundEnabled, coordinateLabelMode } = useSettings()
@@ -162,34 +169,55 @@ onUnmounted(() => {
   cursor: grabbing !important;
 }
 
-/* 右上角固定设置按钮 */
-.settings-fab {
+/* 右上角固定按钮组 */
+.top-right-fabs {
   position: fixed;
   top: 16px;
   right: 16px;
   z-index: 10000;
+  display: flex;
+  gap: 10px;
+}
+
+/* 无边框 FAB 按钮 */
+.fab-btn {
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 2px solid #212529;
-  background: #fff;
+  border: none;
+  background: transparent;
+  color: #212529;
   font-size: 1.4rem;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  transition: background-color 0.15s;
   padding: 0;
-  line-height: 1;
+  transition: background-color 0.15s, color 0.15s;
+  text-decoration: none;
 }
 
-.settings-fab:hover {
-  background: #f0f0f0;
+.fab-btn:hover .fab-icon :deep(svg) {
+  opacity: 0.85;
 }
 
-.settings-fab:focus-visible {
+.fab-btn:focus-visible {
   outline: 2px solid #ffd33d;
   outline-offset: 2px;
+}
+
+/* FAB 图标容器 */
+.fab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+
+.fab-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 </style>

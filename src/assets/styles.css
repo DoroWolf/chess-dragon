@@ -69,13 +69,13 @@ textarea,
 }
 
 .btn-warning {
-  background-color: #f7d51d;
-  color: #212529;
+  background-color: #deca14;
+  color: #fff;
 }
 
 .btn-success {
-  background-color: #92cc41;
-  color: #212529;
+  background-color: #1cb221;
+  color: #fff;
 }
 
 .btn:disabled {

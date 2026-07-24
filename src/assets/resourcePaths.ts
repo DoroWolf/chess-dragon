@@ -21,7 +21,7 @@ export function pieceImg(type: string, color: string): string {
 
 // ---------- 升变 ----------
 export function promotionImg(piece: string, color: string): string {
-  return new URL(`./texture/promotion/promotion_${piece}_${color}.png`, import.meta.url).href
+  return new URL(`./texture/icon/${piece}_${color}_icon.png`, import.meta.url).href
 }
 
 // ---------- 音效 ----------

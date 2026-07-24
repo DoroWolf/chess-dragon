@@ -9,7 +9,7 @@
         <span v-else class="material-diff-text"></span>
       </div>
       <button type="button" class="btn flip-sidebar-btn" title="翻转棋盘" @click="$emit('toggle-flip')">
-        🔄
+        <span class="btn-icon" v-html="refreshSvg"></span>
       </button>
     </div>
 
@@ -22,31 +22,32 @@
     </div>
 
     <div v-if="isGameOver" class="button-group">
-      <button type="button" class="btn settings-btn" @click="$emit('back-to-home')">
-        返回
+      <button type="button" class="btn" title="返回" @click="$emit('back-to-home')">
+        <span class="btn-icon" v-html="homeSvg"></span>
       </button>
-      <button type="button" class="btn btn-primary" @click="$emit('restart')">
-        重赛
+      <button type="button" class="btn btn-primary" title="重赛" @click="$emit('restart')">
+        <span class="btn-icon" v-html="refreshSvg"></span>
       </button>
-      <button type="button" class="btn btn-info" :disabled="!pgnText" @click="copyPGN">
-        {{ copyStatusText === '复制' ? '复制 PGN' : copyStatusText }}
+      <button type="button" class="btn" title="复制 PGN" :disabled="!pgnText" @click="copyPGN">
+        <span class="btn-icon" v-html="exportPgnSvg"></span>
       </button>
     </div>
     <div v-else class="button-group">
-      <button type="button" class="btn btn-warning" :disabled="isUndoDisabled" @click="$emit('undo')">
-        悔棋
+      <button type="button" class="btn btn-warning" title="悔棋" :disabled="isUndoDisabled" @click="$emit('undo')">
+        <span class="btn-icon" v-html="undoSvg"></span>
       </button>
       <button
         type="button"
         class="btn"
         :class="isClaimableDraw ? 'btn-success' : 'btn-primary'"
+        :title="isClaimableDraw ? '宣告和棋' : '提议和棋'"
         :disabled="isDrawOfferDisabled"
         @click="handleDrawClick"
       >
-        {{ isClaimableDraw ? '宣告和棋' : '提议和棋' }}
+        <span class="btn-icon" v-html="drawSvg"></span>
       </button>
-      <button type="button" class="btn btn-danger" :disabled="isGameActionDisabled" @click="handleResignClick">
-        认输
+      <button type="button" class="btn btn-danger" title="认输" :disabled="isGameActionDisabled" @click="handleResignClick">
+        <span class="btn-icon" v-html="resignSvg"></span>
       </button>
     </div>
 
@@ -67,6 +68,12 @@
 import { computed, ref } from 'vue'
 import type { Board, Color, PieceType } from '../models/chess'
 import ChessClock from './ChessClock.vue'
+import homeSvg from '../assets/icon/home.svg?raw'
+import refreshSvg from '../assets/icon/refresh.svg?raw'
+import exportPgnSvg from '../assets/icon/export_pgn.svg?raw'
+import undoSvg from '../assets/icon/undo.svg?raw'
+import drawSvg from '../assets/icon/draw.svg?raw'
+import resignSvg from '../assets/icon/resign.svg?raw'
 
 interface Props {
   isClockEnabled?: boolean
@@ -449,25 +456,15 @@ const materialDiffText = computed(() => {
   margin-left: 2px;
   flex: 1;
 }
-
 .flip-sidebar-btn {
   padding: 0.2rem 0.5rem;
-  font-size: 0.9rem;
   flex-shrink: 0;
 }
 
 .button-group {
   display: flex;
   flex-direction: row;
-  gap: 0.25rem;
-  width: 100%;
-}
-
-.button-group.Single-btn {
-  display: block;
-}
-
-.button-group.Single-btn .restart-btn {
+  gap: 0.5rem;
   width: 100%;
 }
 
@@ -477,7 +474,6 @@ const materialDiffText = computed(() => {
   padding: 0.35rem 0.15rem;
 }
 
-/* 弹窗布局专有样式 */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -509,7 +505,7 @@ const materialDiffText = computed(() => {
 
 .dialog-buttons .btn {
   flex: 1;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   padding: 0.25rem 0.5rem;
 }
 
@@ -532,11 +528,6 @@ const materialDiffText = computed(() => {
   font-weight: bold;
 }
 
-.flip-btn {
-  font-size: 0.7rem;
-  padding: 2px 8px;
-}
-
 .custom-checkbox {
   width: 1rem;
   height: 1rem;
@@ -545,5 +536,18 @@ const materialDiffText = computed(() => {
 
 .select-wrapper {
   width: auto;
+}
+
+.btn-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.button-group .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15em;
 }
 </style>
