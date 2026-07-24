@@ -2,7 +2,9 @@
   <section class="game-container" :class="{ 'global-dragging': isMouseDown && dragStartSquare }"
     :style="{ '--piece-scale': pieceScale }">
 
-    <GameSetup v-if="showSetup" @start="handleGameSetupStart" @remote="handleRemoteGame" />
+    <GameSetup v-if="showSetup && !showRemotePanel" @start="handleGameSetupStart" @remote="handleRemoteGame" />
+
+    <RemoteGamePanel v-if="showRemotePanel" @start="handleRemoteStart" @back="handleRemoteBack" />
 
     <!-- 棋盘主面板 -->
     <BoardPanel :board="board" :current-turn="currentTurn" :selected-square="selectedSquare"
@@ -62,10 +64,12 @@ import { onUnmounted, ref } from 'vue'
 import Sidebar from './components/Sidebar.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import GameSetup from './components/GameSetup.vue'
+import RemoteGamePanel from './components/RemoteGamePanel.vue'
 import BoardPanel from './components/BoardPanel.vue'
 import { useSettings } from './composables/useSettings'
 import { useBoardDisplay } from './composables/useBoardDisplay'
 import { useGameState } from './composables/useGameState'
+import type { GameSetupConfig } from './components/GameSetup.vue'
 import settingSvg from './assets/icon/setting.svg?raw'
 import githubSvg from './assets/icon/github.svg?raw'
 
@@ -136,9 +140,21 @@ const {
   stopClock,
 } = game
 
-// ---- 远程对战 ----
+// ---- 远程对局 ----
+const showRemotePanel = ref(false)
+
 const handleRemoteGame = () => {
-  // TODO: 后续实现远程对战功能
+  showSetup.value = false
+  showRemotePanel.value = true
+}
+
+const handleRemoteStart = (config: GameSetupConfig) => {
+  showRemotePanel.value = false
+  handleGameSetupStart(config)
+}
+
+const handleRemoteBack = () => {
+  showRemotePanel.value = false
   showSetup.value = true
 }
 
@@ -183,7 +199,6 @@ onUnmounted(() => {
 .fab-btn {
   width: 44px;
   height: 44px;
-  border-radius: 50%;
   border: none;
   background: transparent;
   color: #212529;

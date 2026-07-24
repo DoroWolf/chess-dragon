@@ -109,7 +109,7 @@ export function useGameState(
   let wasAlreadySelected = false
   let touchStartSquare: { row: number; col: number } | null = null
 
-  // ---- AI 对战状态 ----
+  // ---- AI 对局状态 ----
   const gameMode = ref<'ai' | 'human' | 'remote'>('human')
   const aiDifficulty = ref<AIDifficulty>(3)
   const aiStyle = ref<AIStyle>('balanced')
@@ -1064,7 +1064,7 @@ export function useGameState(
     // 清除 premove
     premove.value = null
 
-    // AI 对战中，悔棋撤回两步（撤消 AI 的走棋 + 玩家的上一步）
+    // AI 对局中，悔棋撤回两步（撤消 AI 的走棋 + 玩家的上一步）
     if (gameMode.value === 'ai') {
       // 取消可能正在等待的 AI 走棋
       cancelAIMove()
@@ -1168,7 +1168,7 @@ export function useGameState(
 
     const config = lastSetupConfig.value
 
-    // 本地双人对战：不交换先手方，白方始终先行，不翻转棋盘
+    // 本地双人对局：不交换先手方，白方始终先行，不翻转棋盘
     if (config.gameMode === 'human') {
       applyGameSetup(config)
       return

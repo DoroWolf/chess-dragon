@@ -7,9 +7,9 @@
                 <img :src="titleImg" alt="Chess Dragon" class="title-img" />
             </div>
             <div class="home-buttons">
-                <button class="btn btn-home" @click="startSetup('ai')">人机对战</button>
-                <button class="btn btn-home" @click="startSetup('human')">双人对战</button>
-                <button class="btn btn-home btn-home--secondary" @click="handleRemote">远程对战</button>
+                <button class="btn btn-home" @click="startSetup('ai')">人机对局</button>
+                <button class="btn btn-home" @click="startSetup('human')">双人对局</button>
+                <button class="btn btn-home btn-home--secondary" @click="handleRemote">远程对局</button>
             </div>
         </section>
 
@@ -52,7 +52,7 @@
                 </label>
             </div>
 
-            <!-- 强度设置（仅人机对战） -->
+            <!-- 强度设置（仅人机对局） -->
             <div v-if="gameMode === 'ai'" class="setup-section">
                 <h3>强度</h3>
                 <div class="option-group">
@@ -64,7 +64,7 @@
                 </div>
             </div>
 
-            <!-- AI 风格设置（仅人机对战） -->
+            <!-- AI 风格设置（仅人机对局） -->
             <div v-if="gameMode === 'ai'" class="setup-section">
                 <h3>AI 风格</h3>
                 <div class="option-group">
@@ -108,10 +108,10 @@
             <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
             <div class="setup-actions">
-                <button type="button" class="btn bottom-btn" @click="screen = 'home'">
+                <button type="button" class="btn " @click="screen = 'home'">
                     返回
                 </button>
-                <button type="button" class="btn bottom-btn btn-primary start-btn" :disabled="!canStart" @click="handleStart">
+                <button type="button" class="btn  btn-primary start-btn" :disabled="!canStart" @click="handleStart">
                     开始对局
                 </button>
             </div>
@@ -341,26 +341,13 @@ const handleStart = () => {
     padding: 14px 0;
     font-size: 1.15rem;
     font-weight: 600;
-    border: 2px solid #212529;
     background: #fff;
     color: #212529;
-    cursor: pointer;
-    transition: background-color 0.15s, color 0.15s;
-}
-
-.btn-home:hover {
-    background: #212529;
-    color: #fff;
 }
 
 .btn-home--secondary {
     border-color: #888;
     color: #666;
-}
-
-.btn-home--secondary:hover {
-    background: #888;
-    color: #fff;
 }
 
 .setup-panel {
